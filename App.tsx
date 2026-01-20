@@ -3,6 +3,7 @@ import { db } from './db';
 import { User, UserRole } from './types';
 import { supabase } from './lib/supabase';
 import LandingPage from './views/LandingPage';
+import AuthPage from './views/AuthPage';
 import AdminDashboard from './views/AdminDashboard';
 import StaffDashboard from './views/StaffDashboard';
 import StudentDashboard from './views/StudentDashboard';
@@ -15,6 +16,9 @@ interface AuthContextType {
   logout: () => void;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
+  currentView: 'landing' | 'auth';
+  authMode: 'login' | 'signup';
+  navigateTo: (view: 'landing' | 'auth', mode?: 'login' | 'signup') => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -31,6 +35,8 @@ const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [adminTab, setAdminTab] = useState('overview');
+  const [currentView, setCurrentView] = useState<'landing' | 'auth'>('landing');
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('signup');
   
   const lastProcessedId = useRef<string | null>(null);
 
@@ -59,7 +65,6 @@ const App: React.FC = () => {
 
   const fetchProfile = async (id: string, email?: string) => {
     try {
-      // Step 1: Fetch current authenticated profile
       let { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
@@ -72,8 +77,6 @@ const App: React.FC = () => {
       const normalizedUsernameSlash = emailPrefix.replace(/_/g, '/');
       const normalizedUsernameUnderscore = emailPrefix;
 
-      // Step 2: Check for a "Legacy Registry" entry created by Admin
-      // We look for profiles with the same username (any format) but a DIFFERENT ID
       const { data: legacy } = await supabase
         .from('profiles')
         .select('*')
@@ -82,26 +85,18 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (legacy) {
-        console.log(`[Registry Bridge] Synchronizing credentials for: ${legacy.full_name} (${legacy.role})`);
-        
-        // Migrate all relational data to the new Auth ID
-        // We use legacy.id as the source ID
         await Promise.allSettled([
-          // Update student records
           supabase.from('students').update({ profile_id: id }).eq('profile_id', legacy.id),
-          supabase.from('students').update({ profile_id: id }).eq('id', legacy.id), // Just in case stu.id was used
-          // Update class assignments
+          supabase.from('students').update({ profile_id: id }).eq('id', legacy.id),
           supabase.from('classes').update({ form_teacher_id: id }).eq('form_teacher_id', legacy.id),
-          // Update subject assignments
           supabase.from('teacher_subjects').update({ teacher_id: id }).eq('teacher_id', legacy.id)
         ]);
 
-        // Upsert the reconciled profile data into the new authenticated ID
         const { data: reconciled, error: upsertError } = await supabase
           .from('profiles')
           .upsert({ 
             id,
-            username: legacy.username, // Maintain the original format (with slashes) for registry lookups
+            username: legacy.username,
             full_name: legacy.full_name,
             role: legacy.role, 
             password: null 
@@ -111,7 +106,6 @@ const App: React.FC = () => {
 
         if (!upsertError && reconciled) {
           profile = reconciled;
-          // Clean up the legacy placeholder
           await supabase.from('profiles').delete().eq('id', legacy.id);
         }
       }
@@ -138,10 +132,17 @@ const App: React.FC = () => {
     try {
       await supabase.auth.signOut();
       setUser(null);
+      setCurrentView('landing');
     } catch (err) {
       console.error("Logout error:", err);
       window.location.reload(); 
     }
+  };
+
+  const navigateTo = (view: 'landing' | 'auth', mode: 'login' | 'signup' = 'signup') => {
+    setCurrentView(view);
+    setAuthMode(mode);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   useEffect(() => {
@@ -160,8 +161,8 @@ const App: React.FC = () => {
 
   if (!user) {
     return (
-      <AuthContext.Provider value={{ user, loading, login, logout, isDarkMode, toggleDarkMode }}>
-        <LandingPage />
+      <AuthContext.Provider value={{ user, loading, login, logout, isDarkMode, toggleDarkMode, currentView, authMode, navigateTo }}>
+        {currentView === 'landing' ? <LandingPage /> : <AuthPage />}
       </AuthContext.Provider>
     );
   }
@@ -202,7 +203,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isDarkMode, toggleDarkMode }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, isDarkMode, toggleDarkMode, currentView, authMode, navigateTo }}>
       <div className="min-h-screen flex flex-col md:flex-row bg-slate-50 dark:bg-slate-900 transition-colors duration-200">
         <div className="md:hidden flex items-center justify-between p-4 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-50">
           <div className="flex items-center gap-2">
