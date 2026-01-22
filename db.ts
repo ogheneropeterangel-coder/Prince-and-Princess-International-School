@@ -30,7 +30,8 @@ export const db = {
       return (data || []) as User[];
     },
     save: async (user: User) => {
-      const { error } = await supabase.from('profiles').upsert(user, { onConflict: 'username' });
+      // Standard upsert using primary key 'id'
+      const { error } = await supabase.from('profiles').upsert(user);
       if (error) throw error;
       delete cache['users'];
     },

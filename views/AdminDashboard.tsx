@@ -1,18 +1,20 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { db } from '../db';
-import { User, UserRole, SchoolClass, Subject, Student, ClassLevel, Gender, TeacherSubject, SchoolSettings } from '../types';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { db, calculatePositions } from '../db';
+import { User, UserRole, SchoolClass, Subject, Student, ClassLevel, Gender, TeacherSubject, SchoolSettings, Score, FormTeacherRemark } from '../types';
 import StatsCard from '../components/StatsCard';
 import { StatsSkeleton, TableSkeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
+import { getGrade, getOrdinal, getAutoRemark } from '../constants';
 import { 
   Users, GraduationCap, Book, School, Plus, Search, Trash2, Edit2, 
   Link as LinkIcon, Save, X, Phone, MapPin, 
   AlertCircle, AlertTriangle, User as UserIcon, Check, Layers, UserPlus, Home,
-  Settings as SettingsIcon, Palette, Calendar, Building2, Image as ImageIcon, Sparkles
+  Settings as SettingsIcon, Palette, Calendar, Building2, Image as ImageIcon, Sparkles,
+  Download, FileSpreadsheet, Upload, FileType, FileText, Printer, Eye, Award, BarChart3, Fingerprint, Crown, TrendingUp, CheckCircle2, Clock, Send, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 
 interface AdminDashboardProps {
-  activeTab: 'overview' | 'students' | 'teachers' | 'classes' | 'subjects' | 'assignments' | 'settings' | 'availability';
+  activeTab: 'overview' | 'students' | 'teachers' | 'classes' | 'subjects' | 'assignments' | 'settings' | 'availability' | 'results' | 'promotion';
   onTabChange: (tab: string) => void;
 }
 
@@ -23,13 +25,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [teacherSubjects, setTeacherSubjects] = useState<TeacherSubject[]>([]);
+  const [allScores, setAllScores] = useState<Score[]>([]);
+  const [allRemarks, setAllRemarks] = useState<FormTeacherRemark[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState<string | null>(null);
   const [editingEntity, setEditingEntity] = useState<any | null>(null);
+  const [selectedReportStudent, setSelectedReportStudent] = useState<Student | null>(null);
+  const [viewingResultStudent, setViewingResultStudent] = useState<Student | null>(null);
 
   const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     show: boolean;
@@ -38,6 +46,25 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
     title: string;
     message: string;
   }>({ show: false, type: '', id: '', title: '', message: '' });
+
+  // Promotion State
+  const [promotionSourceClassId, setPromotionSourceClassId] = useState<string>('');
+  const [promotionTargetClassId, setPromotionTargetClassId] = useState<string>('');
+  const [selectedPromotionStudentIds, setSelectedPromotionStudentIds] = useState<Set<string>>(new Set());
+  const [isPromoting, setIsPromoting] = useState(false);
+  const [promotionConfirmData, setPromotionConfirmData] = useState<{
+    show: boolean;
+    count: number;
+    targetClassName: string;
+    individualStudent?: Student;
+  }>({ show: false, count: 0, targetClassName: '' });
+
+  // Student Edit Confirmation State
+  const [studentEditConfirm, setStudentEditConfirm] = useState<{
+    show: boolean;
+    name: string;
+    isSaving: boolean;
+  }>({ show: false, name: '', isSaving: false });
 
   // Settings State
   const [settingsData, setSettingsData] = useState<SchoolSettings | null>(null);
@@ -60,41 +87,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
   const [newSubject, setNewSubject] = useState({ name: '', category: ClassLevel.JSS });
   const [mapping, setMapping] = useState({ teacherId: '', classId: '', selectedSubjectIds: [] as string[] });
 
-  const refreshData = useCallback(async (forceAll = false) => {
+  const refreshData = useCallback(async () => {
     setLoading(true);
     try {
-      const [stu, profs, cls, subs, ts, s] = await Promise.all([
+      const results = await Promise.allSettled([
         db.students.getAll(),
         db.users.getAll(),
         db.classes.getAll(),
         db.subjects.getAll(),
         db.teacherSubjects.getAll(),
-        db.settings.get()
+        db.settings.get(),
+        db.scores.getAll(),
+        db.remarks.getAll()
       ]);
       
-      setStudents(stu);
-      setTeachers(profs.filter(u => u.role !== UserRole.STUDENT));
-      setClasses(cls);
-      setSubjects(subs);
-      setTeacherSubjects(ts);
-      setSettingsData(s);
+      const [stu, profs, cls, subs, ts, s, scs, rems] = results.map(r => r.status === 'fulfilled' ? r.value : []);
+      
+      setStudents(stu as Student[]);
+      setTeachers((profs as User[]).filter(u => u.role !== UserRole.STUDENT));
+      setClasses(cls as SchoolClass[]);
+      setSubjects(subs as Subject[]);
+      setTeacherSubjects(ts as TeacherSubject[]);
+      setSettingsData(s as SchoolSettings);
+      setAllScores(scs as Score[]);
+      setAllRemarks(rems as FormTeacherRemark[]);
       
       setStats({ 
-        students: stu.length, 
-        teachers: profs.filter(u => u.role !== UserRole.STUDENT).length, 
-        classes: cls.length, 
-        subjects: subs.length 
+        students: (stu as Student[]).length, 
+        teachers: (profs as User[]).filter(u => u.role !== UserRole.STUDENT).length, 
+        classes: (cls as SchoolClass[]).length, 
+        subjects: (subs as Subject[]).length 
       });
+      
+      if (s?.primary_color) {
+        document.documentElement.style.setProperty('--school-royal', s.primary_color);
+      }
     } catch (err: any) {
       console.error('Data Sync Failure:', err);
     } finally {
       setLoading(false);
     }
-  }, [activeTab]);
+  }, []);
 
   useEffect(() => {
     refreshData();
-  }, [refreshData]);
+  }, [refreshData, activeTab]);
 
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
@@ -105,109 +142,149 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
     });
   }, [students, searchTerm, selectedClassId]);
 
-  const handleUpdateSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!settingsData) return;
-    setIsUpdatingSettings(true);
-    try {
-      await db.settings.update(settingsData);
-      alert('School configuration updated successfully.');
-      document.documentElement.style.setProperty('--brand-primary', settingsData.primary_color);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setIsUpdatingSettings(false);
+  const computeStudentResults = useCallback((studentId: string) => {
+    if (!settingsData) return { total: 0, average: 0, count: 0, position: 0 };
+    const studentScores = allScores.filter(s => s.student_id === studentId && s.term === settingsData.current_term && s.session === settingsData.current_session);
+    const total = studentScores.reduce((acc, s) => acc + (Number(s.first_ca) + Number(s.second_ca) + Number(s.exam)), 0);
+    const count = studentScores.length;
+    const average = count ? total / count : 0;
+    
+    const studentInfo = students.find(st => st.id === studentId);
+    const classStudents = students.filter(s => s.class_id === studentInfo?.class_id);
+    const classPositions = calculatePositions(classStudents, allScores, settingsData.current_term, settingsData.current_session);
+    const position = classPositions[studentId] || 0;
+
+    return { total, average, count, position };
+  }, [allScores, settingsData, students]);
+
+  const handlePrintStudent = (student: Student) => {
+    setSelectedReportStudent(student);
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => setSelectedReportStudent(null), 1000);
+    }, 300);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && settingsData) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert("Logo file is too large. Please select an image under 2MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSettingsData({ ...settingsData, logo: reader.result as string });
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  const handleAddStudent = async (e: React.FormEvent) => {
+  const handleUpdateSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    if (!settingsData) return;
+
+    if (!/^\d{4}\/\d{4}$/.test(settingsData.current_session)) {
+      alert("Please enter session in format YYYY/YYYY (e.g. 2025/2026)");
+      return;
+    }
+
+    setIsUpdatingSettings(true);
     try {
-      const currentYear = new Date().getFullYear();
-      const randomId = Math.floor(1000 + Math.random() * 9000);
-      const admNo = (editingEntity?.admission_number || `PPIS/${currentYear}/${randomId}`).toLowerCase();
-      const profileId = editingEntity?.profile_id || editingEntity?.id || crypto.randomUUID();
-      const studentId = editingEntity?.id || crypto.randomUUID();
-
-      await db.users.save({ 
-        id: profileId, 
-        full_name: `${newStudent.first_name} ${newStudent.surname}`, 
-        username: admNo, 
-        password: newStudent.surname.toLowerCase().trim(), 
-        role: UserRole.STUDENT, 
-        created_at: editingEntity?.created_at || new Date().toISOString() 
-      });
-
-      await db.students.save({ 
-        id: studentId, 
-        first_name: newStudent.first_name, 
-        surname: newStudent.surname, 
-        middle_name: newStudent.middle_name,
-        gender: newStudent.gender, 
-        class_id: newStudent.class_id, 
-        admission_number: admNo, 
-        profile_id: profileId,
-        parent_name: newStudent.parent_name,
-        parent_phone: newStudent.parent_phone,
-        parent_address: newStudent.parent_address
-      });
-
-      setShowAddModal(null);
-      refreshData();
-    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+      await db.settings.update(settingsData);
+      document.documentElement.style.setProperty('--school-royal', settingsData.primary_color);
+      alert('Settings Synchronized.');
+      await refreshData();
+    } catch (err: any) { alert(err.message); } finally { setIsUpdatingSettings(false); }
   };
 
-  const handleAddTeacher = async (e: React.FormEvent) => {
+  const handleAddStudent = (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    try {
-      const id = editingEntity?.id || crypto.randomUUID();
-      await db.users.save({ 
-        id, 
-        full_name: newTeacher.fullName, 
-        username: newTeacher.username.toLowerCase().trim(), 
-        password: newTeacher.password, 
-        role: newTeacher.role, 
-        created_at: editingEntity?.created_at || new Date().toISOString() 
-      });
-      setShowAddModal(null);
-      refreshData();
-    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+    if (!newStudent.first_name || !newStudent.surname || !newStudent.class_id) {
+      alert("Please fill all required fields");
+      return;
+    }
+    setStudentEditConfirm({
+      show: true,
+      name: `${newStudent.first_name} ${newStudent.surname}`,
+      isSaving: false
+    });
   };
 
-  const handleAddClass = async (e: React.FormEvent) => {
+  const handleSaveClass = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newClass.name) {
+      alert("Class name is required.");
+      return;
+    }
     setLoading(true);
     try {
-      await db.classes.save({ 
-        id: editingEntity?.id || crypto.randomUUID(), 
-        name: newClass.name, 
-        level: newClass.level, 
-        arm: newClass.arm, 
-        form_teacher_id: newClass.form_teacher_id || undefined 
+      await db.classes.save({
+        id: editingEntity?.id || crypto.randomUUID(),
+        ...newClass
       });
       setShowAddModal(null);
-      refreshData();
-    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+      await refreshData();
+    } catch (err: any) {
+      alert("Registry Sync Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleAddSubject = async (e: React.FormEvent) => {
+  const handleSaveSubject = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newSubject.name) {
+      alert("Subject name is required.");
+      return;
+    }
     setLoading(true);
     try {
-      await db.subjects.save({ 
-        id: editingEntity?.id || crypto.randomUUID(), 
-        name: newSubject.name, 
-        category: newSubject.category 
+      await db.subjects.save({
+        id: editingEntity?.id || crypto.randomUUID(),
+        ...newSubject
       });
       setShowAddModal(null);
-      refreshData();
-    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+      await refreshData();
+    } catch (err: any) {
+      alert("Registry Sync Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveTeacher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTeacher.fullName || !newTeacher.username || (!editingEntity && !newTeacher.password)) {
+      alert("Please fill all required fields");
+      return;
+    }
+    setLoading(true);
+    try {
+      const teacherId = editingEntity?.id || crypto.randomUUID();
+      await db.users.save({
+        id: teacherId,
+        full_name: newTeacher.fullName,
+        username: newTeacher.username,
+        password: newTeacher.password || editingEntity?.password || newTeacher.fullName.split(' ')[0].toLowerCase(),
+        role: newTeacher.role as UserRole,
+        created_at: editingEntity?.created_at || new Date().toISOString()
+      });
+      setShowAddModal(null);
+      await refreshData();
+    } catch (err: any) {
+      alert("Staff Registry Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleBulkMapping = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!mapping.teacherId || !mapping.classId || mapping.selectedSubjectIds.length === 0) {
+      alert("Please select a teacher, class, and at least one subject.");
+      return;
+    }
     setLoading(true);
     try {
       const promises = mapping.selectedSubjectIds.map(subjectId => 
@@ -221,8 +298,63 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
       await Promise.all(promises);
       setMapping({ teacherId: '', classId: '', selectedSubjectIds: [] });
       setShowAddModal(null);
-      refreshData();
-    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+      await refreshData();
+      alert("Teaching assignments synchronized successfully.");
+    } catch (err: any) { 
+      alert("Assignment Error: " + err.message); 
+    } finally { 
+      setLoading(false); 
+    }
+  };
+
+  const executePromotion = async () => {
+    if (!promotionTargetClassId || selectedPromotionStudentIds.size === 0) return;
+    setIsPromoting(true);
+    try {
+      const promises = Array.from(selectedPromotionStudentIds).map(id => {
+        const student = students.find(s => s.id === id);
+        if (student) {
+          return db.students.save({ ...student, class_id: promotionTargetClassId });
+        }
+        return Promise.resolve();
+      });
+      await Promise.all(promises);
+      alert(`${selectedPromotionStudentIds.size} students promoted successfully.`);
+      setSelectedPromotionStudentIds(new Set());
+      setPromotionConfirmData({ ...promotionConfirmData, show: false });
+      await refreshData();
+    } catch (err: any) {
+      alert("Promotion Error: " + err.message);
+    } finally {
+      setIsPromoting(false);
+    }
+  };
+
+  const executeStudentSave = async () => {
+    setStudentEditConfirm(prev => ({ ...prev, isSaving: true }));
+    try {
+      const currentYear = new Date().getFullYear();
+      const admNo = (editingEntity?.admission_number || `PPIS/${currentYear}/${Math.floor(1000 + Math.random() * 9000)}`).toLowerCase();
+      const profileId = editingEntity?.profile_id || editingEntity?.id || crypto.randomUUID();
+      const studentId = editingEntity?.id || crypto.randomUUID();
+
+      await db.users.save({ 
+        id: profileId, full_name: `${newStudent.first_name} ${newStudent.surname}`, 
+        username: admNo, password: editingEntity?.password || newStudent.surname.toLowerCase().trim(), 
+        role: UserRole.STUDENT, created_at: editingEntity?.created_at || new Date().toISOString() 
+      });
+
+      await db.students.save({ 
+        id: studentId, ...newStudent, admission_number: admNo, profile_id: profileId
+      });
+
+      setStudentEditConfirm({ show: false, name: '', isSaving: false });
+      setShowAddModal(null);
+      await refreshData();
+    } catch (err: any) { 
+      alert("Error: " + err.message); 
+      setStudentEditConfirm(prev => ({ ...prev, isSaving: false }));
+    }
   };
 
   const executeDelete = async () => {
@@ -233,29 +365,162 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
         const s = students.find(item => item.id === id);
         if (s?.profile_id) await db.users.remove(s.profile_id);
         await db.students.remove(id);
-      } else if (type === 'teacher') {
-        await db.users.remove(id);
-      } else if (type === 'class') {
-        await db.classes.remove(id);
-      } else if (type === 'subject') {
-        await db.subjects.remove(id);
-      } else if (type === 'mapping') {
-        await db.teacherSubjects.remove(id);
-      }
+      } else if (type === 'teacher') await db.users.remove(id);
+      else if (type === 'class') await db.classes.remove(id);
+      else if (type === 'subject') await db.subjects.remove(id);
+      else if (type === 'mapping') await db.teacherSubjects.remove(id);
       setDeleteConfirmation({ ...deleteConfirmation, show: false });
-      refreshData();
+      await refreshData();
     } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+  }
+
+  const promotionSourceStudents = useMemo(() => {
+    if (!promotionSourceClassId) return [];
+    return students.filter(s => s.class_id === promotionSourceClassId);
+  }, [students, promotionSourceClassId]);
+
+  const ModernReportCard = ({ student }: { student: Student }) => {
+    const res = computeStudentResults(student.id);
+    const cls = classes.find(c => c.id === student.class_id);
+    const remark = allRemarks.find(rem => rem.student_id === student.id && rem.term === settingsData?.current_term && rem.session === settingsData?.current_session);
+    
+    if (!settingsData) return null;
+
+    return (
+      <div className="bg-white p-10 md:p-14 font-sans text-black w-full max-w-4xl min-h-[1100px] flex flex-col relative overflow-hidden rounded-[1.5rem] border border-slate-100 print:shadow-none print:border-none print:m-0 print:p-8">
+        {/* Central Branding Header */}
+        <div className="flex flex-col items-center text-center mb-10 relative z-10 text-black">
+            <div className="w-20 h-20 rounded-2xl bg-[#1e1b4b] flex items-center justify-center shadow-xl mb-4">
+               {settingsData.logo ? (
+                  <img src={settingsData.logo} alt="Logo" className="w-12 h-12 object-contain" />
+               ) : (
+                  <Building2 className="text-white" size={32} />
+               )}
+            </div>
+            <h1 className="text-2xl md:text-3xl font-bold uppercase tracking-tight text-black mb-1 leading-none">{settingsData.name}</h1>
+            <p className="text-[8px] font-semibold text-slate-500 uppercase tracking-[0.4em] pt-1">Official Academic Terminal Record</p>
+            <p className="text-[8px] font-bold text-[#1e1b4b] uppercase tracking-widest mt-2">{settingsData.current_session} Session • Term {settingsData.current_term}</p>
+        </div>
+
+        {/* Student Identification Bar */}
+        <div className="grid grid-cols-4 gap-0 mb-8 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden relative z-10 text-black">
+            <div className="p-4 border-r border-slate-200">
+              <p className="text-[7px] font-bold text-slate-400 uppercase tracking-widest mb-1">Full Name</p>
+              <p className="text-xs font-semibold text-black uppercase truncate">{student.first_name} {student.surname}</p>
+            </div>
+            <div className="p-4 border-r border-slate-200">
+              <p className="text-[7px] font-bold text-slate-400 uppercase tracking-widest mb-1">Adm Number</p>
+              <p className="text-xs font-semibold text-black uppercase font-mono">{student.admission_number}</p>
+            </div>
+            <div className="p-4 border-r border-slate-200">
+              <p className="text-[7px] font-bold text-slate-400 uppercase tracking-widest mb-1">Class Level</p>
+              <p className="text-xs font-semibold text-black uppercase">{cls?.name || '---'}</p>
+            </div>
+            <div className="p-4 text-right">
+              <p className="text-[7px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gender</p>
+              <p className="text-xs font-semibold text-black uppercase">{student.gender}</p>
+            </div>
+        </div>
+
+        {/* Subject Performance Matrix */}
+        <div className="flex-1 relative z-10 mb-8 overflow-hidden rounded-xl border border-slate-200 bg-white text-black">
+          <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#1e1b4b] text-white">
+                  <th className="py-3.5 px-6 text-[9px] font-black uppercase tracking-widest">Subject Discipline</th>
+                  <th className="py-3.5 px-3 text-[9px] font-black uppercase tracking-widest text-center w-16 border-l border-white/5">CA 1</th>
+                  <th className="py-3.5 px-3 text-[9px] font-black uppercase tracking-widest text-center w-16 border-l border-white/5">CA 2</th>
+                  <th className="py-3.5 px-3 text-[9px] font-black uppercase tracking-widest text-center w-16 border-l border-white/5">Exam</th>
+                  <th className="py-3.5 px-3 text-[9px] font-black uppercase tracking-widest text-center w-16 border-l border-white/5 bg-[#312e81]">Total</th>
+                  <th className="py-3.5 px-4 text-[9px] font-black uppercase tracking-widest text-center w-20 border-l border-white/5">Grade</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-black">
+                {subjects.filter(sub => sub.category === cls?.level).map((sub) => {
+                  const s = allScores.find(score => score.student_id === student.id && score.subject_id === sub.id && score.term === settingsData.current_term && score.session === settingsData.current_session);
+                  const total = (s?.first_ca || 0) + (s?.second_ca || 0) + (s?.exam || 0);
+                  const grade = getGrade(total);
+                  return (
+                    <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="py-3 px-6 font-semibold text-[11px] uppercase tracking-tight text-black">{sub.name}</td>
+                      <td className="py-3 px-3 text-center text-[10px] font-medium text-slate-600 border-l border-slate-50">{s?.first_ca ?? '0'}</td>
+                      <td className="py-3 px-3 text-center text-[10px] font-medium text-slate-600 border-l border-slate-50">{s?.second_ca ?? '0'}</td>
+                      <td className="py-3 px-3 text-center text-[10px] font-medium text-slate-600 border-l border-slate-50">{s?.exam ?? '0'}</td>
+                      <td className="py-3 px-3 text-center font-bold text-[#1e1b4b] bg-slate-50/30 text-[12px] border-l border-slate-100">{total || '0'}</td>
+                      <td className="py-3 px-4 text-center border-l border-slate-100">
+                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-md font-bold text-[9px] uppercase border ${
+                          total >= 70 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 
+                          total >= 60 ? 'bg-blue-50 border-blue-200 text-blue-700' : 
+                          total >= 50 ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-rose-50 border-rose-200 text-rose-700'
+                        }`}>
+                          {grade}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+          </table>
+        </div>
+
+        {/* Performance Metrics Summary */}
+        <div className="grid grid-cols-3 gap-6 mb-8 relative z-10 text-black">
+            <div className="bg-[#1e1b4b] p-6 rounded-2xl text-white shadow-lg flex flex-col justify-center">
+              <p className="text-[7px] font-bold text-white/40 uppercase tracking-[0.3em] mb-1">Aggregate</p>
+              <p className="text-xl font-bold tracking-tighter">{res.total.toFixed(0)} <span className="text-[10px] opacity-30">/ {subjects.filter(sub => sub.category === cls?.level).length * 100}</span></p>
+            </div>
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-center">
+              <p className="text-[7px] font-bold text-slate-400 uppercase tracking-[0.3em] mb-1">Average Score</p>
+              <p className="text-xl font-bold text-[#1e1b4b] tracking-tighter">{res.average.toFixed(1)}%</p>
+            </div>
+            <div className="bg-[#eff6ff] p-6 rounded-2xl border border-blue-100 shadow-sm flex items-center justify-between">
+              <div>
+                <p className="text-[7px] font-bold text-blue-500 uppercase tracking-[0.3em] mb-1">Class Position</p>
+                <p className="text-xl font-bold text-blue-900 tracking-tighter">{getOrdinal(res.position)}</p>
+              </div>
+              <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-amber-500 border border-amber-50 shadow-inner">
+                <Crown size={18} fill="currentColor" />
+              </div>
+            </div>
+        </div>
+
+        {/* Institutional Remarks */}
+        <div className="mb-8 p-6 bg-slate-50 rounded-xl border border-slate-200 relative z-10 text-black">
+          <p className="text-[7px] font-bold text-slate-400 uppercase tracking-[0.5em] mb-2 flex items-center gap-2">
+            <Sparkles size={10} className="text-[#1e1b4b]" /> Faculty Master Remark & Insight
+          </p>
+          <p className="text-sm font-medium italic text-black leading-relaxed">
+            "{remark?.remark || getAutoRemark(res.average)}"
+          </p>
+        </div>
+        
+        {/* Registry Signatures */}
+        <div className="mt-auto grid grid-cols-2 gap-16 pt-10 border-t-2 border-dotted border-slate-200 relative z-10 text-black">
+            <div className="space-y-3">
+              <div className="h-[1px] bg-slate-300 w-full" />
+              <p className="text-[8px] font-semibold uppercase tracking-[0.4em] text-slate-500 text-center">Class Teacher Signature</p>
+            </div>
+            <div className="space-y-3">
+              <div className="h-[1px] bg-slate-300 w-full" />
+              <p className="text-[8px] font-semibold uppercase tracking-[0.4em] text-slate-500 text-center">Principal's Attestation</p>
+            </div>
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-10 animate-in fade-in duration-500">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-10 animate-in fade-in duration-500 pb-20">
+      {/* Page Header */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 no-print">
         <div>
           <h1 className="text-4xl font-black dark:text-white uppercase tracking-tighter">Admin <span className="text-blue-600">Dashboard</span></h1>
           <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-[10px] mt-1">Registry Management • {activeTab}</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          {activeTab === 'students' && <button onClick={() => { setEditingEntity(null); setNewStudent({ first_name: '', surname: '', middle_name: '', gender: Gender.MALE, class_id: '', parent_phone: '', parent_address: '', parent_name: '' }); setShowAddModal('student'); }} className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-200 transition-all"><Plus size={18} /> Enroll Student</button>}
+          {activeTab === 'students' && (
+            <button onClick={() => { setEditingEntity(null); setNewStudent({ first_name: '', surname: '', middle_name: '', gender: Gender.MALE, class_id: '', parent_phone: '', parent_address: '', parent_name: '' }); setShowAddModal('student'); }} className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-200 transition-all"><Plus size={18} /> Enroll Student</button>
+          )}
           {activeTab === 'teachers' && <button onClick={() => { setEditingEntity(null); setNewTeacher({ fullName: '', username: '', password: '', role: UserRole.FORM_TEACHER }); setShowAddModal('teacher'); }} className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-200 transition-all"><Plus size={18} /> Add Staff</button>}
           {activeTab === 'classes' && <button onClick={() => { setEditingEntity(null); setNewClass({ name: '', level: ClassLevel.JSS, arm: 'A', form_teacher_id: '' }); setShowAddModal('class'); }} className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-200 transition-all"><Plus size={18} /> Create Class</button>}
           {activeTab === 'subjects' && <button onClick={() => { setEditingEntity(null); setNewSubject({ name: '', category: ClassLevel.JSS }); setShowAddModal('subject'); }} className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-200 transition-all"><Plus size={18} /> Add Subject</button>}
@@ -263,103 +528,131 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
         </div>
       </header>
 
-      {loading && activeTab !== 'settings' ? <TableSkeleton /> : (
-        <div className="bg-white dark:bg-slate-800 rounded-[3rem] border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden min-h-[500px]">
+      {loading && activeTab !== 'settings' && activeTab !== 'promotion' ? <TableSkeleton /> : (
+        <div className="bg-white dark:bg-slate-800 rounded-[3rem] border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden min-h-[500px] no-print">
           {activeTab === 'overview' && (
-            <div className="p-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <StatsCard title="Students" value={stats.students} icon={Users} color="blue" />
-              <StatsCard title="Staff" value={stats.teachers} icon={GraduationCap} color="green" />
-              <StatsCard title="Classes" value={stats.classes} icon={School} color="amber" />
-              <StatsCard title="Subjects" value={stats.subjects} icon={Book} color="purple" />
+            <div className="p-10 space-y-10">
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                 <StatsCard title="Total Students" value={stats.students} icon={Users} color="blue" />
+                 <StatsCard title="Faculty Staff" value={stats.teachers} icon={GraduationCap} color="green" />
+                 <StatsCard title="Active Classes" value={stats.classes} icon={School} color="amber" />
+                 <StatsCard title="Subjects" value={stats.subjects} icon={Book} color="purple" />
+               </div>
+               
+               <div className="bg-slate-50 dark:bg-slate-900/50 p-8 rounded-[2.5rem] border dark:border-slate-700 flex flex-col md:flex-row items-center justify-between gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/40 text-blue-600 rounded-2xl flex items-center justify-center">
+                      <Calendar size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black dark:text-white uppercase tracking-tight">Active Academic Cycle</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{settingsData?.current_session || '---'} • Term {settingsData?.current_term || '-'}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => onTabChange('settings')} className="px-8 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all">Configure Session</button>
+               </div>
             </div>
           )}
 
-          {activeTab === 'settings' && settingsData && (
-            <div className="p-10 max-w-4xl mx-auto">
-              <div className="flex items-center gap-3 mb-10">
-                <SettingsIcon size={24} className="text-blue-600" />
-                <h2 className="text-2xl font-black uppercase tracking-tighter">System Configuration</h2>
-              </div>
+          {activeTab === 'promotion' && (
+            <div className="p-10 space-y-10 animate-in fade-in duration-500">
+               <div className="grid md:grid-cols-2 gap-8 bg-slate-50 dark:bg-slate-900/40 p-10 rounded-[3rem] border dark:border-slate-700">
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Source Class (Current Location)</label>
+                    <select className="w-full p-5 rounded-[1.5rem] bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={promotionSourceClassId} onChange={e => { setPromotionSourceClassId(e.target.value); setSelectedPromotionStudentIds(new Set()); }}>
+                       <option value="">Select current class...</option>
+                       {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Target Class (Promotion Destination)</label>
+                    <select className="w-full p-5 rounded-[1.5rem] bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={promotionTargetClassId} onChange={e => setPromotionTargetClassId(e.target.value)}>
+                       <option value="">Select target class...</option>
+                       {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+               </div>
 
-              <form onSubmit={handleUpdateSettings} className="space-y-12">
-                <div className="space-y-8 p-8 bg-slate-50 dark:bg-slate-900/50 rounded-[2.5rem] border dark:border-slate-700">
-                  <div className="flex items-center gap-2">
-                    <Building2 size={16} className="text-blue-500" />
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Identity & Branding</h3>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">School Official Name</label>
-                      <input required className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={settingsData.name} onChange={e => setSettingsData({...settingsData, name: e.target.value})} />
+               {promotionSourceClassId && (
+                 <div className="space-y-6">
+                    <div className="flex items-center justify-between px-6">
+                       <h3 className="text-xl font-black dark:text-white uppercase tracking-tighter">Student Selection Registry</h3>
+                       <div className="flex gap-4">
+                          <button onClick={() => setSelectedPromotionStudentIds(new Set(promotionSourceStudents.map(s => s.id)))} className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:underline">Select All</button>
+                          <button onClick={() => setSelectedPromotionStudentIds(new Set())} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:underline">Clear Selection</button>
+                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">School Motto</label>
-                      <input required className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={settingsData.motto} onChange={e => setSettingsData({...settingsData, motto: e.target.value})} />
+                    <div className="border dark:border-slate-700 rounded-[2.5rem] overflow-hidden">
+                       <table className="w-full text-left">
+                          <thead className="bg-slate-50 dark:bg-slate-900/50">
+                             <tr>
+                                <th className="px-10 py-5 w-16">
+                                   <div className="w-5 h-5" />
+                                </th>
+                                <th className="px-10 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Student Identity</th>
+                                <th className="px-10 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Performance (Avg)</th>
+                             </tr>
+                          </thead>
+                          <tbody className="divide-y dark:divide-slate-700">
+                             {promotionSourceStudents.map(s => {
+                               const isSelected = selectedPromotionStudentIds.has(s.id);
+                               const res = computeStudentResults(s.id);
+                               return (
+                                 <tr key={s.id} onClick={() => {
+                                   const next = new Set(selectedPromotionStudentIds);
+                                   if(isSelected) next.delete(s.id);
+                                   else next.add(s.id);
+                                   setSelectedPromotionStudentIds(next);
+                                 }} className={`cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-slate-50/50'}`}>
+                                    <td className="px-10 py-4">
+                                       <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-200 dark:border-slate-600'}`}>
+                                          {isSelected && <Check size={14} className="text-white" />}
+                                       </div>
+                                    </td>
+                                    <td className="px-10 py-4">
+                                       <p className="font-bold uppercase dark:text-white">{s.surname}, {s.first_name}</p>
+                                       <p className="text-[9px] text-slate-400 font-mono uppercase tracking-widest">{s.admission_number}</p>
+                                    </td>
+                                    <td className="px-10 py-4">
+                                       <span className={`px-4 py-1.5 rounded-xl font-black text-[9px] tracking-widest uppercase ${res.average >= 50 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                         {res.average.toFixed(1)}%
+                                       </span>
+                                    </td>
+                                 </tr>
+                               );
+                             })}
+                          </tbody>
+                       </table>
                     </div>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2"><ImageIcon size={12} /> Logo URL</label>
-                      <input required className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-mono text-[10px] outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={settingsData.logo} onChange={e => setSettingsData({...settingsData, logo: e.target.value})} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2"><Palette size={12} /> Primary Color</label>
-                      <div className="flex gap-2">
-                        <input type="color" className="w-14 h-14 rounded-xl cursor-pointer p-1 bg-white border dark:border-slate-700" value={settingsData.primary_color} onChange={e => setSettingsData({...settingsData, primary_color: e.target.value})} />
-                        <input className="flex-1 p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none uppercase" value={settingsData.primary_color} onChange={e => setSettingsData({...settingsData, primary_color: e.target.value})} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-8 p-8 bg-slate-50 dark:bg-slate-900/50 rounded-[2.5rem] border dark:border-slate-700">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={16} className="text-amber-500" />
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Academic Calendar</h3>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Active Session</label>
-                      <input placeholder="e.g. 2023/2024" required className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={settingsData.current_session} onChange={e => setSettingsData({...settingsData, current_session: e.target.value})} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Current Term</label>
-                      <select className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={settingsData.current_term} onChange={e => setSettingsData({...settingsData, current_term: Number(e.target.value) as 1|2|3})}>
-                        <option value={1}>1st Term</option>
-                        <option value={2}>2nd Term</option>
-                        <option value={3}>3rd Term</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <button type="submit" disabled={isUpdatingSettings} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-2xl flex items-center justify-center gap-3 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50">
-                  {isUpdatingSettings ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save size={18} />}
-                  Synchronize System Configuration
-                </button>
-              </form>
+                    <button disabled={selectedPromotionStudentIds.size === 0 || !promotionTargetClassId} onClick={() => setPromotionConfirmData({ show: true, count: selectedPromotionStudentIds.size, targetClassName: classes.find(c => c.id === promotionTargetClassId)?.name || '---' })} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-[11px] shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-30 flex items-center justify-center gap-4">
+                       <TrendingUp size={20} />
+                       Promote {selectedPromotionStudentIds.size} Students to {classes.find(c => c.id === promotionTargetClassId)?.name || '---'}
+                    </button>
+                 </div>
+               )}
             </div>
           )}
 
-          {activeTab !== 'overview' && activeTab !== 'settings' && (
+          {activeTab !== 'overview' && activeTab !== 'settings' && activeTab !== 'promotion' && (
             <div className="overflow-x-auto">
-               <div className="p-8 border-b dark:border-slate-700 flex justify-between items-center bg-slate-50/30 dark:bg-slate-900/20">
+               <div className="p-8 border-b dark:border-slate-700 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/30 dark:bg-slate-900/20">
                   <div className="relative w-full md:w-80">
                     <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input type="text" placeholder={`Search ${activeTab}...`} className="w-full pl-12 pr-6 py-4 rounded-2xl bg-white dark:bg-slate-900 border dark:border-slate-700 text-sm outline-none font-bold" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                    <input type="text" placeholder={`Search in ${activeTab}...`} className="w-full pl-12 pr-6 py-4 rounded-2xl bg-white dark:bg-slate-900 border dark:border-slate-700 text-sm outline-none font-bold" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                   </div>
-                  {activeTab === 'students' && (
+                  {(activeTab === 'students' || activeTab === 'results') && (
                     <select className="px-5 py-3 rounded-xl bg-white dark:bg-slate-900 border dark:border-slate-700 text-xs font-black uppercase outline-none" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>
-                       <option value="">All Classes</option>
+                       <option value="">Filter by Class...</option>
                        {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   )}
                </div>
+
                <table className="w-full text-left">
                   <thead>
                     <tr className="bg-slate-50 dark:bg-slate-900/50">
-                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">{activeTab === 'assignments' ? 'Faculty Member' : 'Identity'}</th>
-                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">{activeTab === 'assignments' ? 'Course & Class' : 'Registry Detail'}</th>
+                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">{activeTab === 'assignments' ? 'Faculty Member' : 'Identity & ID'}</th>
+                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">{activeTab === 'assignments' ? 'Course & Class' : 'Primary Detail'}</th>
                       <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -368,206 +661,429 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                        <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                          <td className="px-10 py-5">
                             <p className="font-bold uppercase dark:text-white">{s.surname}, {s.first_name}</p>
-                            <p className="text-[10px] text-slate-400 font-mono tracking-widest">{s.admission_number}</p>
+                            <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">{s.admission_number}</p>
                          </td>
-                         <td className="px-10 py-5 text-xs font-bold text-blue-600 uppercase">
-                            {classes.find(c => c.id === s.class_id)?.name || 'Unassigned'}
+                         <td className="px-10 py-5">
+                            <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{classes.find(c => c.id === s.class_id)?.name || 'Unassigned'}</p>
+                            <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">{s.gender}</p>
                          </td>
                          <td className="px-10 py-5 text-right space-x-2">
                             <button onClick={() => { setEditingEntity(s); setNewStudent({ first_name: s.first_name, surname: s.surname, middle_name: s.middle_name || '', gender: s.gender, class_id: s.class_id, parent_phone: s.parent_phone || '', parent_address: s.parent_address || '', parent_name: s.parent_name || '' }); setShowAddModal('student'); }} className="p-3 text-blue-500 hover:bg-blue-50 rounded-xl"><Edit2 size={18} /></button>
-                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'student', id: s.id, title: 'Delete Student', message: `Permanently remove student: ${s.first_name} ${s.surname}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
+                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'student', id: s.id, title: 'Delete Record', message: `Permantly erase ${s.first_name} ${s.surname}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
                          </td>
                        </tr>
                      ))}
+
                      {activeTab === 'teachers' && teachers.filter(t => t.full_name.toLowerCase().includes(searchTerm.toLowerCase())).map(t => (
                        <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                         <td className="px-10 py-5 font-bold uppercase dark:text-white">{t.full_name}</td>
-                         <td className="px-10 py-5 text-[10px] font-black text-emerald-600 uppercase tracking-widest">{t.role.replace('_', ' ')}</td>
+                         <td className="px-10 py-5">
+                            <p className="font-bold uppercase dark:text-white">{t.full_name}</p>
+                            <p className="text-[10px] text-slate-400 font-mono uppercase tracking-widest">ID: {t.username}</p>
+                         </td>
+                         <td className="px-10 py-5">
+                            <span className="px-3 py-1 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-lg text-[9px] font-black uppercase tracking-widest">{t.role.replace('_', ' ')}</span>
+                         </td>
                          <td className="px-10 py-5 text-right space-x-2">
                             <button onClick={() => { setEditingEntity(t); setNewTeacher({ fullName: t.full_name, username: t.username, password: '', role: t.role }); setShowAddModal('teacher'); }} className="p-3 text-blue-500 hover:bg-blue-50 rounded-xl"><Edit2 size={18} /></button>
-                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'teacher', id: t.id, title: 'Delete Staff', message: `Revoke system access for: ${t.full_name}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
+                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'teacher', id: t.id, title: 'Revoke Access', message: `Remove portal access for ${t.full_name}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
                          </td>
                        </tr>
                      ))}
+
                      {activeTab === 'classes' && classes.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).map(c => (
                        <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                         <td className="px-10 py-5 font-bold uppercase dark:text-white">{c.name}</td>
                          <td className="px-10 py-5">
-                            <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest">{c.level} — Arm {c.arm}</p>
-                            <p className="text-[9px] text-slate-400 font-bold uppercase">Form: {teachers.find(t => t.id === c.form_teacher_id)?.full_name || 'Unassigned'}</p>
+                            <p className="font-bold uppercase dark:text-white">{c.name}</p>
+                            <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">Lvl: {c.level} | Arm: {c.arm}</p>
+                         </td>
+                         <td className="px-10 py-5">
+                            <div className="flex flex-col">
+                              <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">
+                                 {teachers.find(t => t.id === c.form_teacher_id)?.full_name || 'Vacant'}
+                              </p>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">Designated Form Teacher</p>
+                            </div>
                          </td>
                          <td className="px-10 py-5 text-right space-x-2">
                             <button onClick={() => { setEditingEntity(c); setNewClass({ name: c.name, level: c.level, arm: c.arm, form_teacher_id: c.form_teacher_id || '' }); setShowAddModal('class'); }} className="p-3 text-blue-500 hover:bg-blue-50 rounded-xl"><Edit2 size={18} /></button>
-                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'class', id: c.id, title: 'Delete Class', message: `Remove academic group: ${c.name}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
+                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'class', id: c.id, title: 'Decommission Class', message: `Permantly remove ${c.name} from registry?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
                          </td>
                        </tr>
                      ))}
+
                      {activeTab === 'subjects' && subjects.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(s => (
-                       <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
-                         <td className="px-10 py-5 font-bold uppercase dark:text-white">{s.name}</td>
-                         <td className="px-10 py-5 text-[10px] font-black text-purple-600 uppercase tracking-widest">{s.category}</td>
-                         <td className="px-10 py-5 text-right space-x-2">
-                            <button onClick={() => { setEditingEntity(s); setNewSubject({ name: s.name, category: s.category }); setShowAddModal('subject'); }} className="p-3 text-blue-500 hover:bg-blue-50 rounded-xl"><Edit2 size={18} /></button>
-                            <button onClick={() => setDeleteConfirmation({ show: true, type: 'subject', id: s.id, title: 'Delete Subject', message: `Erase curriculum subject: ${s.name}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
-                         </td>
-                       </tr>
+                        <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-10 py-5">
+                             <p className="font-bold uppercase dark:text-white">{s.name}</p>
+                             <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">ID: {s.id.split('-')[0]}</p>
+                          </td>
+                          <td className="px-10 py-5">
+                             <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${s.category === ClassLevel.JSS ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
+                                {s.category === ClassLevel.JSS ? 'Junior Secondary' : 'Senior Secondary'}
+                             </span>
+                          </td>
+                          <td className="px-10 py-5 text-right space-x-2">
+                             <button onClick={() => { setEditingEntity(s); setNewSubject({ name: s.name, category: s.category }); setShowAddModal('subject'); }} className="p-3 text-blue-500 hover:bg-blue-50 rounded-xl"><Edit2 size={18} /></button>
+                             <button onClick={() => setDeleteConfirmation({ show: true, type: 'subject', id: s.id, title: 'Delete Subject', message: `Remove ${s.name} from the curriculum?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
+                          </td>
+                        </tr>
                      ))}
-                     {activeTab === 'assignments' && teacherSubjects.filter(ts => {
-                       const t = teachers.find(t => t.id === ts.teacher_id);
-                       const sub = subjects.find(s => s.id === ts.subject_id);
-                       return t?.full_name.toLowerCase().includes(searchTerm.toLowerCase()) || sub?.name.toLowerCase().includes(searchTerm.toLowerCase());
-                     }).map(ts => {
-                       const t = teachers.find(t => t.id === ts.teacher_id);
-                       const sub = subjects.find(s => s.id === ts.subject_id);
-                       const cls = classes.find(c => c.id === ts.class_id);
-                       return (
-                         <tr key={ts.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-10 py-5 font-bold uppercase dark:text-white">{t?.full_name || 'Legacy Account'}</td>
-                            <td className="px-10 py-5 text-xs">
-                               <span className="font-black uppercase tracking-tight dark:text-slate-200">{cls?.name}</span>
-                               <span className="mx-2 text-slate-300">/</span>
-                               <span className="font-bold text-blue-600 uppercase tracking-widest">{sub?.name}</span>
+
+                     {activeTab === 'results' && filteredStudents.map(s => {
+                        const res = computeStudentResults(s.id);
+                        const isHighPerf = res.average >= 70;
+                        const isMidPerf = res.average >= 50;
+                        return (
+                          <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10 transition-all group">
+                            <td className="px-10 py-6">
+                                <div className="flex items-center gap-4">
+                                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-black uppercase ${isHighPerf ? 'bg-emerald-100 text-emerald-600' : isMidPerf ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
+                                    {s.first_name[0]}{s.surname[0]}
+                                  </div>
+                                  <div>
+                                    <p className="font-black uppercase dark:text-white leading-tight">{s.surname}, {s.first_name}</p>
+                                    <p className="text-[9px] text-slate-400 font-mono tracking-widest uppercase">{s.admission_number}</p>
+                                  </div>
+                                </div>
+                            </td>
+                            <td className="px-10 py-6">
+                                <div className="flex items-center gap-6">
+                                  <div>
+                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{classes.find(c => c.id === s.class_id)?.name || 'Unassigned'}</p>
+                                    <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{res.count} subjects recorded</p>
+                                  </div>
+                                  <div className="flex flex-col items-center">
+                                     <span className={`px-4 py-1.5 rounded-xl font-black text-[10px] tracking-widest uppercase ${isHighPerf ? 'bg-emerald-500 text-white' : isMidPerf ? 'bg-blue-500 text-white' : 'bg-rose-500 text-white shadow-rose-100 dark:shadow-none shadow-lg'}`}>
+                                       {res.average.toFixed(1)}%
+                                     </span>
+                                  </div>
+                                </div>
+                            </td>
+                            <td className="px-10 py-6 text-right space-x-3">
+                                <button onClick={() => setViewingResultStudent(s)} className="p-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 rounded-2xl transition-all" title="View Transcript"><Eye size={20} /></button>
+                                <button onClick={() => handlePrintStudent(s)} className="p-3 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-700 rounded-2xl transition-all" title="Print Academic Report"><Printer size={20} /></button>
+                            </td>
+                          </tr>
+                        );
+                     })}
+
+                     {activeTab === 'assignments' && teacherSubjects.map(ts => {
+                        const teacher = teachers.find(t => t.id === ts.teacher_id);
+                        const subject = subjects.find(s => s.id === ts.subject_id);
+                        const schoolClass = classes.find(c => c.id === ts.class_id);
+                        return (
+                          <tr key={ts.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-10 py-5">
+                              <p className="font-bold uppercase dark:text-white">{teacher?.full_name || 'Legacy ID: ' + ts.teacher_id}</p>
+                              <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">{teacher?.username || '---'}</p>
+                            </td>
+                            <td className="px-10 py-5">
+                              <div className="flex flex-col">
+                                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{schoolClass?.name || 'Unassigned'}</p>
+                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase mt-1">{subject?.name || 'Unknown'}</p>
+                              </div>
                             </td>
                             <td className="px-10 py-5 text-right">
-                               <button onClick={() => setDeleteConfirmation({ show: true, type: 'mapping', id: ts.id, title: 'Revoke Assignment', message: 'Cancel this teaching mapping?' })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl"><Trash2 size={18} /></button>
+                              <button onClick={() => setDeleteConfirmation({ show: true, type: 'mapping', id: ts.id, title: 'Revoke Assignment', message: `Remove assignment for ${teacher?.full_name}?` })} className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors">
+                                <Trash2 size={18} />
+                              </button>
                             </td>
-                         </tr>
-                       );
+                          </tr>
+                        );
                      })}
+
+                     {/* Empty States */}
+                     {activeTab === 'students' && students.length === 0 && (
+                        <tr><td colSpan={3} className="py-20 text-center text-slate-400 font-black uppercase tracking-widest text-[10px]">No students found in registry</td></tr>
+                     )}
+                     {activeTab === 'assignments' && teacherSubjects.length === 0 && (
+                        <tr><td colSpan={3} className="py-20 text-center text-slate-400 font-black uppercase tracking-widest text-[10px]">No teaching assignments recorded</td></tr>
+                     )}
                   </tbody>
                </table>
             </div>
           )}
+
+          {activeTab === 'settings' && settingsData && (
+             <div className="p-10 max-w-4xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center gap-3">
+                   <SettingsIcon size={24} className="text-blue-600" />
+                   <h2 className="text-2xl font-black uppercase tracking-tighter dark:text-white">Institution Configuration</h2>
+                </div>
+                
+                <form onSubmit={handleUpdateSettings} className="space-y-12">
+                   {/* School Identity */}
+                   <div className="space-y-8 p-10 bg-slate-50 dark:bg-slate-900/50 rounded-[3rem] border dark:border-slate-700 shadow-inner">
+                      <div className="flex items-center gap-2">
+                        <Building2 size={16} className="text-blue-500" />
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Identity & Branding</h3>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-8">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">School Official Name</label>
+                          <input required className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={settingsData.name} onChange={e => setSettingsData({...settingsData, name: e.target.value})} />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Institutional Motto</label>
+                          <input required className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={settingsData.motto} onChange={e => setSettingsData({...settingsData, motto: e.target.value})} />
+                        </div>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-8">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2"><ImageIcon size={12} /> Institutional Logo</label>
+                          <div className="relative group">
+                            <input type="file" accept="image/*" onChange={handleLogoUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                            <div className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center gap-4 transition-all group-hover:border-blue-500 shadow-sm">
+                              <div className="w-14 h-14 rounded-xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 flex items-center justify-center overflow-hidden">
+                                {settingsData.logo ? <img src={settingsData.logo} alt="Logo Preview" className="w-full h-full object-contain p-1" /> : <ImageIcon className="text-slate-300" size={24} />}
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Upload Logo</p>
+                                <p className="text-[9px] text-slate-400 font-medium">Click to select (under 2MB)</p>
+                              </div>
+                              <Upload size={18} className="text-blue-500" />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2"><Palette size={12} /> Interface Theme Color</label>
+                          <div className="flex gap-3">
+                            <div className="relative w-16 h-16 shrink-0 overflow-hidden rounded-2xl border-4 border-white dark:border-slate-800 shadow-md">
+                              <input type="color" className="absolute inset-[-50%] w-[200%] h-[200%] cursor-pointer p-0 border-none outline-none" value={settingsData.primary_color} onChange={e => setSettingsData({...settingsData, primary_color: e.target.value})} />
+                            </div>
+                            <input className="flex-1 p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none uppercase font-mono tracking-widest" value={settingsData.primary_color} onChange={e => setSettingsData({...settingsData, primary_color: e.target.value})} />
+                          </div>
+                        </div>
+                      </div>
+                   </div>
+
+                   {/* Academic Period */}
+                   <div className="space-y-8 p-10 bg-slate-50 dark:bg-slate-900/50 rounded-[3rem] border dark:border-slate-700 shadow-inner">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={16} className="text-amber-500" />
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Active Academic Period</h3>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-8">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Active Session (YYYY/YYYY)</label>
+                          <input required placeholder="e.g. 2025/2026" className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={settingsData.current_session} onChange={e => setSettingsData({...settingsData, current_session: e.target.value})} />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Current Term</label>
+                          <select className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={settingsData.current_term} onChange={e => setSettingsData({...settingsData, current_term: Number(e.target.value) as 1|2|3})}>
+                             <option value={1}>1st Academic Term</option>
+                             <option value={2}>2nd Academic Term</option>
+                             <option value={3}>3rd Academic Term</option>
+                          </select>
+                        </div>
+                      </div>
+                   </div>
+
+                   <button disabled={isUpdatingSettings} type="submit" className="w-full py-6 bg-blue-600 text-white rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[11px] shadow-2xl flex items-center justify-center gap-4 transition-all hover:scale-[1.01] hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50">
+                      {isUpdatingSettings ? (
+                        <div className="w-5 h-5 border-3 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <Save size={20} />
+                          Commit System Synchronization
+                        </>
+                      )}
+                   </button>
+                </form>
+             </div>
+          )}
         </div>
       )}
 
-      {/* Enroll Student Modal */}
-      {showAddModal === 'student' && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 p-8 md:p-12 rounded-[3.5rem] w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-10">
-               <div>
-                  <h2 className="text-3xl font-black uppercase tracking-tighter flex items-center gap-3">
-                    <UserPlus className="text-blue-600" size={32} />
-                    {editingEntity ? 'Update Student' : 'Enroll Student'}
-                  </h2>
-                  <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">Registry Enrollment System</p>
-               </div>
-               <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
-            </div>
-            <form onSubmit={handleAddStudent} className="space-y-8">
-               <div className="grid md:grid-cols-3 gap-4">
-                 <div className="space-y-1">
-                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Surname</label>
-                   <input required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600" value={newStudent.surname} onChange={e => setNewStudent({...newStudent, surname: e.target.value})} />
-                 </div>
-                 <div className="space-y-1">
-                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">First Name</label>
-                   <input required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600" value={newStudent.first_name} onChange={e => setNewStudent({...newStudent, first_name: e.target.value})} />
-                 </div>
-                 <div className="space-y-1">
-                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Middle Name</label>
-                   <input className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600" value={newStudent.middle_name} onChange={e => setNewStudent({...newStudent, middle_name: e.target.value})} />
-                 </div>
-               </div>
-               <div className="grid md:grid-cols-2 gap-4">
-                 <select className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold" value={newStudent.gender} onChange={e => setNewStudent({...newStudent, gender: e.target.value as Gender})}>
-                   <option value={Gender.MALE}>Male</option><option value={Gender.FEMALE}>Female</option>
-                 </select>
-                 <select required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold" value={newStudent.class_id} onChange={e => setNewStudent({...newStudent, class_id: e.target.value})}>
-                   <option value="">Target Class...</option>
-                   {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                 </select>
-               </div>
-               <div className="space-y-4 pt-4 border-t dark:border-slate-700">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <input placeholder="Guardian Name" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold" value={newStudent.parent_name} onChange={e => setNewStudent({...newStudent, parent_name: e.target.value})} />
-                    <input placeholder="Guardian Phone" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold" value={newStudent.parent_phone} onChange={e => setNewStudent({...newStudent, parent_phone: e.target.value})} />
+      {/* Transcript Preview Modal - ALIGNED WITH STUDENT DASHBOARD */}
+      {viewingResultStudent && settingsData && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[60] flex items-center justify-center p-4 md:p-10 no-print">
+           <div className="bg-white dark:bg-slate-800 rounded-[3.5rem] w-full max-w-5xl h-full max-h-[90vh] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col border border-slate-100 dark:border-slate-700">
+              {/* Header Strip */}
+              <div className="px-10 py-8 border-b dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+                <div className="flex items-center gap-6">
+                  <div className="w-14 h-14 bg-[#1e1b4b] rounded-2xl flex items-center justify-center shadow-lg">
+                     {settingsData.logo ? <img src={settingsData.logo} alt="Logo" className="w-8 h-8 object-contain" /> : <Building2 className="text-white" size={28} />}
                   </div>
-                  <textarea placeholder="Residential Address" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold h-24 resize-none" value={newStudent.parent_address} onChange={e => setNewStudent({...newStudent, parent_address: e.target.value})} />
-               </div>
-               <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all">
-                 {editingEntity ? 'Update Registry Entry' : 'Enroll into Registry'}
-               </button>
-            </form>
-          </div>
+                  <div>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-800 dark:text-white leading-none mb-1">{settingsData.name}</h2>
+                    <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.3em]">Institutional Registry • Verified Academic Record</p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <button onClick={() => { setViewingResultStudent(null); handlePrintStudent(viewingResultStudent); }} className="flex items-center gap-3 px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all shadow-xl shadow-blue-200">
+                    <Printer size={18} /> Print Record
+                  </button>
+                  <button onClick={() => setViewingResultStudent(null)} className="p-3 hover:bg-white dark:hover:bg-slate-700 text-slate-400 hover:text-rose-500 rounded-2xl transition-all"><X size={24}/></button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-10 custom-scrollbar bg-white">
+                <div className="scale-90 md:scale-100 origin-top">
+                   <ModernReportCard student={viewingResultStudent} />
+                </div>
+              </div>
+           </div>
         </div>
       )}
 
-      {/* Modals for Staff, Class, Subject, Mapping */}
+      {/* Report Spooling View (Print Only) */}
+      {selectedReportStudent && settingsData && (
+         <div className="print-only fixed inset-0 bg-white z-[999] p-0 overflow-y-auto">
+            <ModernReportCard student={selectedReportStudent} />
+         </div>
+      )}
+
+      {/* Modal Overlays (Enrollment, Staff, etc) */}
+      {showAddModal === 'student' && (
+         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-800 p-10 rounded-[3rem] w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200">
+               <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Update Registry' : 'Enroll Student'}</h2>
+                  <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+               </div>
+               <form onSubmit={(e) => { e.preventDefault(); handleAddStudent(e); }} className="space-y-6">
+                  <div className="grid md:grid-cols-2 gap-4">
+                     <input required placeholder="Surname" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newStudent.surname} onChange={e => setNewStudent({...newStudent, surname: e.target.value})} />
+                     <input required placeholder="First Name" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newStudent.first_name} onChange={e => setNewStudent({...newStudent, first_name: e.target.value})} />
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                     <input placeholder="Middle Name (Optional)" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newStudent.middle_name} onChange={e => setNewStudent({...newStudent, middle_name: e.target.value})} />
+                     <select required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newStudent.gender} onChange={e => setNewStudent({...newStudent, gender: e.target.value as Gender})}>
+                        <option value={Gender.MALE}>Male</option>
+                        <option value={Gender.FEMALE}>Female</option>
+                     </select>
+                  </div>
+                  <select required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold" value={newStudent.class_id} onChange={e => setNewStudent({...newStudent, class_id: e.target.value})}>
+                     <option value="">Assign to Class...</option>
+                     {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  
+                  <div className="border-t dark:border-slate-700 pt-6 space-y-6">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Parent / Guardian Information</p>
+                    <div className="grid md:grid-cols-2 gap-4">
+                       <input placeholder="Parent's Name" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newStudent.parent_name} onChange={e => setNewStudent({...newStudent, parent_name: e.target.value})} />
+                       <input placeholder="Parent's Phone" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newStudent.parent_phone} onChange={e => setNewStudent({...newStudent, parent_phone: e.target.value})} />
+                    </div>
+                    <textarea placeholder="Parent's Residential Address" rows={2} className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none resize-none" value={newStudent.parent_address} onChange={e => setNewStudent({...newStudent, parent_address: e.target.value})} />
+                  </div>
+                  
+                  <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl">Confirm Enrollment</button>
+               </form>
+            </div>
+         </div>
+      )}
+
       {showAddModal === 'teacher' && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 p-10 rounded-[3.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="bg-white dark:bg-slate-800 p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center mb-8">
-               <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Update Staff' : 'Add Staff Member'}</h2>
-               <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+              <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Update Staff' : 'Add Faculty Member'}</h2>
+              <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
             </div>
-            <form onSubmit={handleAddTeacher} className="space-y-6">
-               <input placeholder="Full Legal Name" required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newTeacher.fullName} onChange={e => setNewTeacher({...newTeacher, fullName: e.target.value})} />
-               <div className="grid md:grid-cols-2 gap-4">
-                  <input placeholder="Staff ID / Username" required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newTeacher.username} onChange={e => setNewTeacher({...newTeacher, username: e.target.value})} />
-                  <select className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newTeacher.role} onChange={e => setNewTeacher({...newTeacher, role: e.target.value as UserRole})}>
-                     <option value={UserRole.FORM_TEACHER}>Faculty Member</option><option value={UserRole.ADMIN}>Administrator</option>
-                  </select>
-               </div>
-               <input placeholder="Initial Portal Password" required={!editingEntity} className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newTeacher.password} onChange={e => setNewTeacher({...newTeacher, password: e.target.value})} />
-               <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl">Confirm Personnel Record</button>
+            <form onSubmit={handleSaveTeacher} className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Full Legal Name</label>
+                <input required placeholder="e.g. John Doe" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newTeacher.fullName} onChange={e => setNewTeacher({...newTeacher, fullName: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Portal Username / ID</label>
+                <input required placeholder="e.g. jdoe_staff" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newTeacher.username} onChange={e => setNewTeacher({...newTeacher, username: e.target.value})} />
+              </div>
+              {!editingEntity && (
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Initial Password</label>
+                  <input required type="password" placeholder="••••••••" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newTeacher.password} onChange={e => setNewTeacher({...newTeacher, password: e.target.value})} />
+                </div>
+              )}
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Institutional Role</label>
+                <select required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newTeacher.role} onChange={e => setNewTeacher({...newTeacher, role: e.target.value as UserRole})}>
+                   <option value={UserRole.FORM_TEACHER}>Form Master / Teacher</option>
+                   <option value={UserRole.ADMIN}>Administrative Staff</option>
+                </select>
+              </div>
+              <button type="submit" disabled={loading} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:bg-blue-700 transition-all disabled:opacity-50">
+                {loading ? 'Processing...' : (editingEntity ? 'Confirm Updates' : 'Add to Faculty')}
+              </button>
             </form>
           </div>
         </div>
       )}
 
       {showAddModal === 'class' && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 p-10 rounded-[3.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center mb-8">
-               <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Modify Group' : 'Create Academic Group'}</h2>
-               <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-800 p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+               <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Update Class' : 'Create Class'}</h2>
+                  <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+               </div>
+               <form onSubmit={handleSaveClass} className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Classroom Name</label>
+                    <input required placeholder="e.g. JSS 1A" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newClass.name} onChange={e => setNewClass({...newClass, name: e.target.value})} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Level</label>
+                      <select className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={newClass.level} onChange={e => setNewClass({...newClass, level: e.target.value as ClassLevel})}>
+                         <option value={ClassLevel.JSS}>Junior Secondary</option>
+                         <option value={ClassLevel.SS}>Senior Secondary</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Arm / Section</label>
+                      <select className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={newClass.arm} onChange={e => setNewClass({...newClass, arm: e.target.value as 'A' | 'B'})}>
+                         <option value="A">Arm A</option>
+                         <option value="B">Arm B</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Form Master Designation</label>
+                    <select className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all" value={newClass.form_teacher_id} onChange={e => setNewClass({...newClass, form_teacher_id: e.target.value})}>
+                       <option value="">Select Staff...</option>
+                       {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                    </select>
+                  </div>
+                  <button type="submit" disabled={loading} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:bg-blue-700 transition-all disabled:opacity-50">
+                    {loading ? 'Processing...' : (editingEntity ? 'Confirm Updates' : 'Establish Class')}
+                  </button>
+               </form>
             </div>
-            <form onSubmit={handleAddClass} className="space-y-6">
-               <input required placeholder="Class Name (e.g. JSS 1 Alpha)" className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newClass.name} onChange={e => setNewClass({...newClass, name: e.target.value})} />
-               <div className="grid md:grid-cols-2 gap-4">
-                  <select className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newClass.level} onChange={e => setNewClass({...newClass, level: e.target.value as ClassLevel})}>
-                    <option value={ClassLevel.JSS}>Junior Secondary</option><option value={ClassLevel.SS}>Senior Secondary</option>
-                  </select>
-                  <select className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newClass.arm} onChange={e => setNewClass({...newClass, arm: e.target.value as 'A' | 'B'})}>
-                    <option value="A">Arm A</option><option value="B">Arm B</option>
-                  </select>
-               </div>
-               <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Assign Form Master</label>
-                  <select className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newClass.form_teacher_id} onChange={e => setNewClass({...newClass, form_teacher_id: e.target.value})}>
-                     <option value="">Unassigned</option>
-                     {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
-                  </select>
-               </div>
-               <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl">Finalize Class Creation</button>
-            </form>
-          </div>
-        </div>
+         </div>
       )}
 
       {showAddModal === 'subject' && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 p-10 rounded-[3.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center mb-8">
-               <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Edit Course' : 'Add Curriculum Course'}</h2>
-               <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-800 p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+               <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-black uppercase tracking-tighter">{editingEntity ? 'Update Subject' : 'Add Subject'}</h2>
+                  <button onClick={() => setShowAddModal(null)} className="p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
+               </div>
+               <form onSubmit={handleSaveSubject} className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Subject Name</label>
+                    <input required placeholder="e.g. Further Mathematics" className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newSubject.name} onChange={e => setNewSubject({...newSubject, name: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Curriculum Category</label>
+                    <select required className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-sm" value={newSubject.category} onChange={e => setNewSubject({...newSubject, category: e.target.value as ClassLevel})}>
+                       <option value={ClassLevel.JSS}>Junior Secondary (JSS)</option>
+                       <option value={ClassLevel.SS}>Senior Secondary (SS)</option>
+                    </select>
+                  </div>
+                  <button type="submit" disabled={loading} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:bg-blue-700 transition-all disabled:opacity-50">
+                    {loading ? 'Processing...' : (editingEntity ? 'Confirm Updates' : 'Add Subject to Curriculum')}
+                  </button>
+               </form>
             </div>
-            <form onSubmit={handleAddSubject} className="space-y-6">
-               <input placeholder="Subject Name" required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newSubject.name} onChange={e => setNewSubject({...newSubject, name: e.target.value})} />
-               <select className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 font-bold outline-none" value={newSubject.category} onChange={e => setNewSubject({...newSubject, category: e.target.value as ClassLevel})}>
-                  <option value={ClassLevel.JSS}>Junior Curriculum</option>
-                  <option value={ClassLevel.SS}>Senior Curriculum</option>
-               </select>
-               <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl">Commit Subject Entry</button>
-            </form>
-          </div>
-        </div>
+         </div>
       )}
 
+      {/* Mapping Modal (Teaching Assignments) */}
       {showAddModal === 'mapping' && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-50 flex items-center justify-center p-4 no-print">
           <div className="bg-white dark:bg-slate-800 p-10 rounded-[3.5rem] w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center mb-8">
                <h2 className="text-3xl font-black uppercase tracking-tighter">Teaching Assignments</h2>
@@ -575,11 +1091,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
             </div>
             <form onSubmit={handleBulkMapping} className="space-y-6">
                <div className="grid md:grid-cols-2 gap-4">
-                  <select required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold" value={mapping.teacherId} onChange={e => setMapping({...mapping, teacherId: e.target.value})}>
+                  <select required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold outline-none" value={mapping.teacherId} onChange={e => setMapping({...mapping, teacherId: e.target.value})}>
                      <option value="">Choose Staff...</option>
                      {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
                   </select>
-                  <select required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold" value={mapping.classId} onChange={e => setMapping({...mapping, classId: e.target.value})}>
+                  <select required className="w-full p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border font-bold outline-none" value={mapping.classId} onChange={e => setMapping({...mapping, classId: e.target.value})}>
                      <option value="">Choose Class...</option>
                      {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
@@ -606,13 +1122,50 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
         </div>
       )}
 
+      {/* Confirmation Modals */}
+      {studentEditConfirm.show && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 no-print">
+          <div className="bg-white dark:bg-slate-800 rounded-[3rem] w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-10 flex flex-col items-center text-center gap-4">
+              <div className="p-5 bg-blue-600 text-white rounded-[2rem] shadow-xl mb-2"><Edit2 size={48} /></div>
+              <h3 className="text-2xl font-black text-blue-700 dark:text-blue-400 uppercase tracking-tighter">Commit Registry Update</h3>
+              <p className="text-sm font-bold text-slate-500 dark:text-slate-400 leading-relaxed">Overwrite existing records for <span className="text-blue-600 font-black">{studentEditConfirm.name}</span>?</p>
+            </div>
+            <div className="p-10 flex gap-4">
+               <button onClick={() => setStudentEditConfirm({show: false, name: '', isSaving: false})} className="flex-1 py-4.5 bg-slate-100 dark:bg-slate-700 dark:text-white font-black rounded-2xl uppercase tracking-widest text-[10px]">Go Back</button>
+               <button disabled={studentEditConfirm.isSaving} onClick={executeStudentSave} className="flex-1 py-4.5 bg-blue-600 text-white font-black rounded-2xl uppercase tracking-widest text-[10px] shadow-lg shadow-blue-200">
+                  {studentEditConfirm.isSaving ? 'Syncing...' : 'Commit Changes'}
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {promotionConfirmData.show && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 no-print">
+          <div className="bg-white dark:bg-slate-800 rounded-[3rem] w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-10 flex flex-col items-center text-center gap-4">
+              <div className="p-5 bg-blue-600 text-white rounded-[2rem] shadow-xl mb-2"><TrendingUp size={48} /></div>
+              <h3 className="text-2xl font-black text-blue-700 dark:text-blue-400 uppercase tracking-tighter">Confirm Academic Promotion</h3>
+              <p className="text-sm font-bold text-slate-500 dark:text-slate-400 leading-relaxed">Are you sure you want to promote <span className="text-blue-600 font-black">{promotionConfirmData.count}</span> students to <span className="text-blue-600 font-black">{promotionConfirmData.targetClassName}</span>?</p>
+            </div>
+            <div className="p-10 flex gap-4">
+               <button disabled={isPromoting} onClick={() => setPromotionConfirmData({...promotionConfirmData, show: false})} className="flex-1 py-4.5 bg-slate-100 dark:bg-slate-700 dark:text-white font-black rounded-2xl uppercase tracking-widest text-[10px]">Review Again</button>
+               <button disabled={isPromoting} onClick={executePromotion} className="flex-1 py-4.5 bg-blue-600 text-white font-black rounded-2xl uppercase tracking-widest text-[10px]">
+                  {isPromoting ? 'Promoting...' : 'Confirm & Execute'}
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteConfirmation.show && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6">
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 no-print">
           <div className="bg-white dark:bg-slate-800 rounded-[3rem] w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="bg-rose-50 dark:bg-rose-900/20 p-10 flex flex-col items-center text-center gap-4">
               <div className="p-5 bg-rose-500 text-white rounded-[2rem] shadow-xl mb-2"><AlertTriangle size={48} /></div>
-              <h3 className="text-2xl font-black text-rose-600 dark:text-rose-400 uppercase tracking-tighter">Registry Alert</h3>
-              <p className="text-sm font-bold text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs">{deleteConfirmation.message}</p>
+              <h3 className="text-2xl font-black text-rose-600 dark:text-rose-400 uppercase tracking-tighter">Registry Caution</h3>
+              <p className="text-sm font-bold text-slate-500 dark:text-slate-400 leading-relaxed">{deleteConfirmation.message}</p>
             </div>
             <div className="p-10 flex gap-4">
                <button onClick={() => setDeleteConfirmation({...deleteConfirmation, show: false})} className="flex-1 py-4.5 bg-slate-100 dark:bg-slate-700 dark:text-white font-black rounded-2xl uppercase tracking-widest text-[10px]">Abort</button>

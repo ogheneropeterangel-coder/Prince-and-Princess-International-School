@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { db } from './db';
 import { User, UserRole } from './types';
@@ -7,7 +8,7 @@ import AuthPage from './views/AuthPage';
 import AdminDashboard from './views/AdminDashboard';
 import StaffDashboard from './views/StaffDashboard';
 import StudentDashboard from './views/StudentDashboard';
-import { LogOut, Sun, Moon, Menu, X, User as UserIcon, LayoutDashboard, Users, GraduationCap, School, BookOpen, Settings, Link as LinkIcon, AlertCircle } from 'lucide-react';
+import { LogOut, Sun, Moon, Menu, X, User as UserIcon, LayoutDashboard, Users, GraduationCap, School, BookOpen, Settings, Link as LinkIcon, AlertCircle, FileText, TrendingUp } from 'lucide-react';
 
 interface AuthContextType {
   user: User | null;
@@ -248,6 +249,8 @@ const App: React.FC = () => {
                    <NavItem icon={GraduationCap} label="Staff" id="teachers" />
                    <NavItem icon={School} label="Classes" id="classes" />
                    <NavItem icon={BookOpen} label="Subjects" id="subjects" />
+                   <NavItem icon={FileText} label="Results" id="results" />
+                   <NavItem icon={TrendingUp} label="Promotion" id="promotion" />
                    <NavItem icon={LinkIcon} label="Mapping" id="assignments" />
                    <NavItem icon={Settings} label="Settings" id="settings" />
                  </>
