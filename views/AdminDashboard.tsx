@@ -10,7 +10,7 @@ import {
   Link as LinkIcon, Save, X, Phone, MapPin, 
   AlertCircle, AlertTriangle, User as UserIcon, Check, Layers, UserPlus, Home,
   Settings as SettingsIcon, Palette, Calendar, Building2, Image as ImageIcon, Sparkles,
-  Download, FileSpreadsheet, Upload, FileType, FileText, Printer, Eye, Award, BarChart3, Fingerprint, Crown, TrendingUp, CheckCircle2, Clock, Send, ShieldCheck, ShieldAlert
+  Download, FileSpreadsheet, Upload, FileType, FileText, Printer, Eye, Award, BarChart3, Fingerprint, Crown, TrendingUp, CheckCircle2, Clock, Send, ShieldCheck, ShieldAlert, Activity, PieChart
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -19,7 +19,15 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange }) => {
-  const [stats, setStats] = useState({ students: 0, teachers: 0, classes: 0, subjects: 0 });
+  const [stats, setStats] = useState({ 
+    students: 0, 
+    teachers: 0, 
+    classes: 0, 
+    subjects: 0,
+    totalScores: 0,
+    publishedScores: 0,
+    approvedScores: 0
+  });
   const [students, setStudents] = useState<Student[]>([]);
   const [teachers, setTeachers] = useState<User[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
@@ -112,11 +120,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
       setAllScores(scs as Score[]);
       setAllRemarks(rems as FormTeacherRemark[]);
       
+      const scoresArray = scs as Score[];
       setStats({ 
         students: (stu as Student[]).length, 
         teachers: (profs as User[]).filter(u => u.role !== UserRole.STUDENT).length, 
         classes: (cls as SchoolClass[]).length, 
-        subjects: (subs as Subject[]).length 
+        subjects: (subs as Subject[]).length,
+        totalScores: scoresArray.length,
+        publishedScores: scoresArray.filter(s => s.is_published).length,
+        approvedScores: scoresArray.filter(s => s.is_approved_by_form_teacher).length
       });
       
       if (s?.primary_color) {
@@ -379,6 +391,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
     return students.filter(s => s.class_id === promotionSourceClassId);
   }, [students, promotionSourceClassId]);
 
+  // Activity Bar Component for Chart
+  const ActivityBar = ({ label, value, max, colorClass, icon: Icon }: any) => {
+    const percentage = max > 0 ? (value / max) * 100 : 0;
+    return (
+      <div className="flex-1 flex flex-col items-center gap-3 group relative">
+        <div className="w-full bg-slate-50 dark:bg-slate-900/40 rounded-2xl h-48 relative overflow-hidden border border-slate-100 dark:border-slate-700/50">
+          <div 
+            className={`absolute bottom-0 left-0 right-0 ${colorClass} transition-all duration-1000 ease-out flex flex-col items-center justify-start pt-2 shadow-inner`}
+            style={{ height: `${percentage}%` }}
+          >
+             <span className="text-[10px] font-black text-white drop-shadow-sm">{value}</span>
+          </div>
+        </div>
+        <div className="flex flex-col items-center text-center">
+           <div className={`p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm mb-1 group-hover:scale-110 transition-transform`}>
+              <Icon size={14} className="text-slate-500" />
+           </div>
+           <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-hover:text-blue-600 transition-colors">{label}</p>
+        </div>
+      </div>
+    );
+  };
+
   const ModernReportCard = ({ student }: { student: Student }) => {
     const res = computeStudentResults(student.id);
     const cls = classes.find(c => c.id === student.class_id);
@@ -531,12 +566,81 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
       {loading && activeTab !== 'settings' && activeTab !== 'promotion' ? <TableSkeleton /> : (
         <div className="bg-white dark:bg-slate-800 rounded-[3rem] border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden min-h-[500px] no-print">
           {activeTab === 'overview' && (
-            <div className="p-10 space-y-10">
+            <div className="p-10 space-y-12">
                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                  <StatsCard title="Total Students" value={stats.students} icon={Users} color="blue" />
                  <StatsCard title="Faculty Staff" value={stats.teachers} icon={GraduationCap} color="green" />
                  <StatsCard title="Active Classes" value={stats.classes} icon={School} color="amber" />
                  <StatsCard title="Subjects" value={stats.subjects} icon={Book} color="purple" />
+               </div>
+
+               <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                  {/* Registry Fulfillment Chart */}
+                  <div className="bg-white dark:bg-slate-800/50 p-10 rounded-[3rem] border border-slate-100 dark:border-slate-700 shadow-sm space-y-8">
+                     <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                           <Activity className="text-blue-600" size={24} />
+                           <h3 className="text-lg font-black uppercase tracking-tight dark:text-white">Registry Fulfillment</h3>
+                        </div>
+                        <div className="px-4 py-1.5 bg-slate-50 dark:bg-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-400">Term Records</div>
+                     </div>
+                     
+                     <div className="flex items-end justify-around gap-6 pt-4">
+                        <ActivityBar label="Recorded" value={stats.totalScores} max={Math.max(stats.totalScores, 20)} colorClass="bg-slate-200 dark:bg-slate-600" icon={FileText} />
+                        <ActivityBar label="Published" value={stats.publishedScores} max={Math.max(stats.totalScores, 20)} colorClass="bg-blue-500" icon={Send} />
+                        <ActivityBar label="Approved" value={stats.approvedScores} max={Math.max(stats.totalScores, 20)} colorClass="bg-emerald-500" icon={ShieldCheck} />
+                     </div>
+
+                     <div className="p-6 bg-blue-50/50 dark:bg-blue-900/10 rounded-2xl flex items-center justify-between border border-blue-100/50 dark:border-blue-800/30">
+                        <div className="flex items-center gap-3">
+                           <CheckCircle2 size={20} className="text-blue-600" />
+                           <p className="text-[10px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-widest">Global Fulfillment Rate</p>
+                        </div>
+                        <p className="text-xl font-black text-blue-900 dark:text-blue-100">
+                           {stats.totalScores > 0 ? ((stats.approvedScores / stats.totalScores) * 100).toFixed(0) : 0}%
+                        </p>
+                     </div>
+                  </div>
+
+                  {/* Institutional Breakdown Chart */}
+                  <div className="bg-white dark:bg-slate-800/50 p-10 rounded-[3rem] border border-slate-100 dark:border-slate-700 shadow-sm space-y-8">
+                     <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                           <PieChart className="text-purple-600" size={24} />
+                           <h3 className="text-lg font-black uppercase tracking-tight dark:text-white">Growth Metrics</h3>
+                        </div>
+                     </div>
+
+                     <div className="space-y-6 pt-4">
+                        {[
+                          { label: 'Learner Base', val: stats.students, max: Math.max(stats.students, 500), color: 'bg-blue-500', icon: Users },
+                          { label: 'Faculty Body', val: stats.teachers, max: Math.max(stats.students, 500), color: 'bg-emerald-500', icon: GraduationCap },
+                          { label: 'Active Classes', val: stats.classes, max: Math.max(stats.students, 500), color: 'bg-amber-500', icon: School },
+                          { label: 'Curriculum', val: stats.subjects, max: Math.max(stats.students, 500), color: 'bg-purple-500', icon: Book },
+                        ].map((item, idx) => (
+                          <div key={idx} className="space-y-2">
+                             <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
+                                <div className="flex items-center gap-2">
+                                   <item.icon size={12} className="text-slate-400" />
+                                   <span className="text-slate-500">{item.label}</span>
+                                </div>
+                                <span className="dark:text-white">{item.val}</span>
+                             </div>
+                             <div className="w-full bg-slate-50 dark:bg-slate-900 rounded-full h-2.5 overflow-hidden border dark:border-slate-700">
+                                <div 
+                                  className={`${item.color} h-full rounded-full transition-all duration-1000 ease-out`}
+                                  style={{ width: `${(item.val / item.max) * 100}%` }}
+                                />
+                             </div>
+                          </div>
+                        ))}
+                     </div>
+
+                     <div className="flex items-center gap-4 text-slate-400 mt-auto pt-4">
+                        <Sparkles size={16} className="text-amber-500 animate-pulse" />
+                        <p className="text-[9px] font-bold uppercase tracking-widest">Insights update automatically across all registry cycles.</p>
+                     </div>
+                  </div>
                </div>
                
                <div className="bg-slate-50 dark:bg-slate-900/50 p-8 rounded-[2.5rem] border dark:border-slate-700 flex flex-col md:flex-row items-center justify-between gap-6">
