@@ -10,11 +10,11 @@ import {
   Link as LinkIcon, Save, X, Phone, MapPin, 
   AlertCircle, AlertTriangle, User as UserIcon, Check, Layers, UserPlus, Home,
   Settings as SettingsIcon, Palette, Calendar, Building2, Image as ImageIcon, Sparkles,
-  Download, FileSpreadsheet, Upload, FileType, FileText, Printer, Eye, Award, BarChart3, Fingerprint, Crown, TrendingUp, CheckCircle2, Clock, Send, ShieldCheck, ShieldAlert, Activity, PieChart
+  Download, FileSpreadsheet, Upload, FileType, FileText, Printer, Eye, Award, BarChart3, Fingerprint, Crown, TrendingUp, CheckCircle2, Clock, Send, ShieldCheck, ShieldAlert, Activity, PieChart, Ticket
 } from 'lucide-react';
 
 interface AdminDashboardProps {
-  activeTab: 'overview' | 'students' | 'teachers' | 'classes' | 'subjects' | 'assignments' | 'settings' | 'availability' | 'results' | 'promotion';
+  activeTab: 'overview' | 'students' | 'teachers' | 'classes' | 'subjects' | 'assignments' | 'settings' | 'availability' | 'results' | 'promotion' | 'permits';
   onTabChange: (tab: string) => void;
 }
 
@@ -42,7 +42,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
   const [showAddModal, setShowAddModal] = useState<string | null>(null);
   const [editingEntity, setEditingEntity] = useState<any | null>(null);
   const [selectedReportStudent, setSelectedReportStudent] = useState<Student | null>(null);
+  const [selectedPermitStudent, setSelectedPermitStudent] = useState<Student | null>(null);
   const [viewingResultStudent, setViewingResultStudent] = useState<Student | null>(null);
+  const [viewingPermitStudent, setViewingPermitStudent] = useState<Student | null>(null);
 
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -169,12 +171,33 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
     return { total, average, count, position };
   }, [allScores, settingsData, students]);
 
+  // Reliable Printing Logic using Effects
+  useEffect(() => {
+    if (selectedReportStudent) {
+      const timer = setTimeout(() => {
+        window.print();
+        setSelectedReportStudent(null);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedReportStudent]);
+
+  useEffect(() => {
+    if (selectedPermitStudent) {
+      const timer = setTimeout(() => {
+        window.print();
+        setSelectedPermitStudent(null);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedPermitStudent]);
+
   const handlePrintStudent = (student: Student) => {
     setSelectedReportStudent(student);
-    setTimeout(() => {
-      window.print();
-      setTimeout(() => setSelectedReportStudent(null), 1000);
-    }, 300);
+  };
+
+  const handlePrintPermit = (student: Student) => {
+    setSelectedPermitStudent(student);
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -414,6 +437,97 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
     );
   };
 
+  const ModernExamPermit = ({ student }: { student: Student }) => {
+    if (!settingsData) return null;
+    const cls = classes.find(c => c.id === student.class_id);
+    return (
+      <div className="w-full max-w-2xl bg-white border-[6px] border-double border-[#1e1b4b] p-8 font-sans text-black relative overflow-hidden rounded-3xl print:m-0 print:border-4">
+        {/* Aesthetic Background Watermark */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
+          <Building2 size={400} />
+        </div>
+
+        {/* Header Section */}
+        <div className="flex items-center gap-6 mb-8 pb-6 border-b-2 border-slate-100">
+          <div className="w-20 h-20 bg-[#1e1b4b] rounded-2xl flex items-center justify-center shadow-lg p-2">
+            {settingsData.logo ? <img src={settingsData.logo} alt="Logo" className="w-full h-full object-contain" /> : <Building2 className="text-white" size={32} />}
+          </div>
+          <div className="flex-1">
+            <h1 className="text-2xl font-black uppercase tracking-tight leading-none mb-1">{settingsData.name}</h1>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.4em] mb-3">{settingsData.motto}</p>
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#1e1b4b] text-white rounded-full">
+              <Ticket size={12} className="text-amber-400" />
+              <span className="text-[9px] font-black uppercase tracking-widest">Examination Permit Card</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Identity Grid */}
+        <div className="grid grid-cols-3 gap-6 relative z-10">
+          <div className="col-span-2 space-y-6">
+            <div className="space-y-1">
+              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Candidate Full Name</p>
+              <p className="text-lg font-black uppercase text-slate-800">{student.first_name} {student.surname} {student.middle_name || ''}</p>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Admission Number</p>
+                <p className="text-sm font-black font-mono text-blue-600 uppercase">{student.admission_number}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Class Level</p>
+                <p className="text-sm font-black uppercase text-slate-800">{cls?.name || '---'}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Gender</p>
+                <p className="text-sm font-black uppercase text-slate-800">{student.gender}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Academic Year</p>
+                <p className="text-sm font-black uppercase text-slate-800">{settingsData.current_session}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-center justify-between border-l-2 border-slate-100 pl-6">
+             <div className="w-32 h-32 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center relative overflow-hidden">
+                <UserIcon size={64} className="text-slate-200" />
+                <p className="absolute bottom-2 text-[6px] font-black uppercase tracking-widest text-slate-300">Identity Photo</p>
+             </div>
+             <div className="w-full text-center space-y-1 mt-4">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Exam Period</p>
+                <p className="text-xs font-black uppercase text-[#1e1b4b]">Term {settingsData.current_term}</p>
+             </div>
+          </div>
+        </div>
+
+        {/* Footer & Rules */}
+        <div className="mt-8 pt-6 border-t-2 border-slate-100 grid grid-cols-2 gap-8 items-end">
+           <div className="space-y-3">
+              <p className="text-[7px] font-bold text-slate-400 uppercase leading-relaxed max-w-[220px]">
+                This permit must be presented at the examination hall. Candidates without this card may be restricted from sitting for exams.
+              </p>
+              <div className="flex items-center gap-2 text-emerald-600">
+                <CheckCircle2 size={12} />
+                <span className="text-[8px] font-black uppercase tracking-widest">System Verified Registry</span>
+              </div>
+           </div>
+           <div className="text-right space-y-4">
+              <div className="h-0.5 bg-slate-200 w-full" />
+              <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Registry Controller Signature</p>
+           </div>
+        </div>
+
+        {/* Decorative corner bar */}
+        <div className="absolute top-0 right-0 w-24 h-24 bg-[#1e1b4b] -mr-12 -mt-12 rotate-45" />
+      </div>
+    );
+  };
+
   const ModernReportCard = ({ student }: { student: Student }) => {
     const res = computeStudentResults(student.id);
     const cls = classes.find(c => c.id === student.class_id);
@@ -563,7 +677,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
         </div>
       </header>
 
-      {loading && activeTab !== 'settings' && activeTab !== 'promotion' ? <TableSkeleton /> : (
+      {loading && activeTab !== 'settings' && activeTab !== 'promotion' && activeTab !== 'permits' ? <TableSkeleton /> : (
         <div className="bg-white dark:bg-slate-800 rounded-[3rem] border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden min-h-[500px] no-print">
           {activeTab === 'overview' && (
             <div className="p-10 space-y-12">
@@ -737,14 +851,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
             </div>
           )}
 
-          {activeTab !== 'overview' && activeTab !== 'settings' && activeTab !== 'promotion' && (
+          {(activeTab === 'students' || activeTab === 'teachers' || activeTab === 'classes' || activeTab === 'subjects' || activeTab === 'results' || activeTab === 'assignments' || activeTab === 'permits') && (
             <div className="overflow-x-auto">
                <div className="p-8 border-b dark:border-slate-700 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/30 dark:bg-slate-900/20">
                   <div className="relative w-full md:w-80">
                     <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input type="text" placeholder={`Search in ${activeTab}...`} className="w-full pl-12 pr-6 py-4 rounded-2xl bg-white dark:bg-slate-900 border dark:border-slate-700 text-sm outline-none font-bold" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                   </div>
-                  {(activeTab === 'students' || activeTab === 'results') && (
+                  {(activeTab === 'students' || activeTab === 'results' || activeTab === 'permits') && (
                     <select className="px-5 py-3 rounded-xl bg-white dark:bg-slate-900 border dark:border-slate-700 text-xs font-black uppercase outline-none" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>
                        <option value="">Filter by Class...</option>
                        {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -752,19 +866,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                   )}
                </div>
 
-               <table className="w-full text-left">
+               <table className="w-full text-left table-fixed">
                   <thead>
                     <tr className="bg-slate-50 dark:bg-slate-900/50">
-                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">{activeTab === 'assignments' ? 'Faculty Member' : 'Identity & ID'}</th>
-                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">{activeTab === 'assignments' ? 'Course & Class' : 'Primary Detail'}</th>
-                      <th className="px-10 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                      <th className={`py-6 text-[10px] font-black uppercase tracking-widest text-slate-400 ${activeTab === 'results' ? 'px-8 w-[40%]' : 'px-10'}`}>{activeTab === 'assignments' ? 'Faculty Member' : 'Identity & ID'}</th>
+                      <th className={`py-6 text-[10px] font-black uppercase tracking-widest text-slate-400 ${activeTab === 'results' ? 'px-8 w-[40%]' : 'px-10'}`}>{activeTab === 'assignments' ? 'Course & Class' : 'Primary Detail'}</th>
+                      <th className={`py-6 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right ${activeTab === 'results' ? 'px-8 w-[20%]' : 'px-10'}`}>Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y dark:divide-slate-700">
                      {activeTab === 'students' && filteredStudents.map(s => (
                        <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                          <td className="px-10 py-5">
-                            <p className="font-bold uppercase dark:text-white">{s.surname}, {s.first_name}</p>
+                            <p className="font-bold uppercase dark:text-white truncate">{s.surname}, {s.first_name}</p>
                             <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">{s.admission_number}</p>
                          </td>
                          <td className="px-10 py-5">
@@ -778,10 +892,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                        </tr>
                      ))}
 
+                     {activeTab === 'permits' && filteredStudents.map(s => (
+                        <tr key={s.id} className="hover:bg-slate-50/50 transition-colors group">
+                           <td className="px-10 py-5">
+                              <div className="flex items-center gap-4">
+                                 <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-black text-xs uppercase shadow-sm">
+                                    {s.first_name[0]}{s.surname[0]}
+                                 </div>
+                                 <div className="min-w-0">
+                                    <p className="font-bold uppercase dark:text-white leading-tight truncate">{s.surname}, {s.first_name}</p>
+                                    <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase truncate">{s.admission_number}</p>
+                                 </div>
+                              </div>
+                           </td>
+                           <td className="px-10 py-5">
+                              <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{classes.find(c => c.id === s.class_id)?.name || 'Unassigned'}</p>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">{s.gender} • Official Entry</p>
+                           </td>
+                           <td className="px-10 py-5 text-right">
+                              <button onClick={() => setViewingPermitStudent(s)} className="inline-flex items-center gap-2 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] transition-all shadow-lg active:scale-[0.98]">
+                                 <Eye size={16} /> Generate Permit
+                              </button>
+                           </td>
+                        </tr>
+                     ))}
+
                      {activeTab === 'teachers' && teachers.filter(t => t.full_name.toLowerCase().includes(searchTerm.toLowerCase())).map(t => (
                        <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
                          <td className="px-10 py-5">
-                            <p className="font-bold uppercase dark:text-white">{t.full_name}</p>
+                            <p className="font-bold uppercase dark:text-white truncate">{t.full_name}</p>
                             <p className="text-[10px] text-slate-400 font-mono uppercase tracking-widest">ID: {t.username}</p>
                          </td>
                          <td className="px-10 py-5">
@@ -818,7 +957,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                      {activeTab === 'subjects' && subjects.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(s => (
                         <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-10 py-5">
-                             <p className="font-bold uppercase dark:text-white">{s.name}</p>
+                             <p className="font-bold uppercase dark:text-white truncate">{s.name}</p>
                              <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">ID: {s.id.split('-')[0]}</p>
                           </td>
                           <td className="px-10 py-5">
@@ -839,31 +978,31 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                         const isMidPerf = res.average >= 50;
                         return (
                           <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10 transition-all group">
-                            <td className="px-10 py-6">
-                                <div className="flex items-center gap-4">
-                                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-black uppercase ${isHighPerf ? 'bg-emerald-100 text-emerald-600' : isMidPerf ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
+                            <td className="px-8 py-6">
+                                <div className="flex items-center gap-4 overflow-hidden">
+                                  <div className={`w-10 h-10 rounded-full shrink-0 flex items-center justify-center text-xs font-black uppercase ${isHighPerf ? 'bg-emerald-100 text-emerald-600' : isMidPerf ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
                                     {s.first_name[0]}{s.surname[0]}
                                   </div>
-                                  <div>
-                                    <p className="font-black uppercase dark:text-white leading-tight">{s.surname}, {s.first_name}</p>
-                                    <p className="text-[9px] text-slate-400 font-mono tracking-widest uppercase">{s.admission_number}</p>
+                                  <div className="min-w-0">
+                                    <p className="font-black uppercase dark:text-white leading-tight truncate">{s.surname}, {s.first_name}</p>
+                                    <p className="text-[9px] text-slate-400 font-mono tracking-widest uppercase mt-1 truncate">{s.admission_number}</p>
                                   </div>
                                 </div>
                             </td>
-                            <td className="px-10 py-6">
-                                <div className="flex items-center gap-6">
-                                  <div>
-                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{classes.find(c => c.id === s.class_id)?.name || 'Unassigned'}</p>
-                                    <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{res.count} subjects recorded</p>
+                            <td className="px-8 py-6">
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest truncate">{classes.find(c => c.id === s.class_id)?.name || 'Unassigned'}</p>
+                                    <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{res.count} Recorded</p>
                                   </div>
-                                  <div className="flex flex-col items-center">
-                                     <span className={`px-4 py-1.5 rounded-xl font-black text-[10px] tracking-widest uppercase ${isHighPerf ? 'bg-emerald-500 text-white' : isMidPerf ? 'bg-blue-500 text-white' : 'bg-rose-500 text-white shadow-rose-100 dark:shadow-none shadow-lg'}`}>
+                                  <div className="flex flex-col items-center shrink-0">
+                                     <span className={`px-4 py-1.5 rounded-xl font-black text-[11px] tracking-widest uppercase ${isHighPerf ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100' : isMidPerf ? 'bg-blue-500 text-white shadow-lg shadow-blue-100' : 'bg-rose-500 text-white shadow-lg shadow-rose-100 dark:shadow-none'}`}>
                                        {res.average.toFixed(1)}%
                                      </span>
                                   </div>
                                 </div>
                             </td>
-                            <td className="px-10 py-6 text-right space-x-3">
+                            <td className="px-8 py-6 text-right space-x-1">
                                 <button onClick={() => setViewingResultStudent(s)} className="p-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 rounded-2xl transition-all" title="View Transcript"><Eye size={20} /></button>
                                 <button onClick={() => handlePrintStudent(s)} className="p-3 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-700 rounded-2xl transition-all" title="Print Academic Report"><Printer size={20} /></button>
                             </td>
@@ -878,13 +1017,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                         return (
                           <tr key={ts.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="px-10 py-5">
-                              <p className="font-bold uppercase dark:text-white">{teacher?.full_name || 'Legacy ID: ' + ts.teacher_id}</p>
+                              <p className="font-bold uppercase dark:text-white truncate">{teacher?.full_name || 'Legacy ID: ' + ts.teacher_id}</p>
                               <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">{teacher?.username || '---'}</p>
                             </td>
                             <td className="px-10 py-5">
                               <div className="flex flex-col">
                                 <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{schoolClass?.name || 'Unassigned'}</p>
-                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase mt-1">{subject?.name || 'Unknown'}</p>
+                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase mt-1 truncate">{subject?.name || 'Unknown'}</p>
                               </div>
                             </td>
                             <td className="px-10 py-5 text-right">
@@ -899,6 +1038,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
                      {/* Empty States */}
                      {activeTab === 'students' && students.length === 0 && (
                         <tr><td colSpan={3} className="py-20 text-center text-slate-400 font-black uppercase tracking-widest text-[10px]">No students found in registry</td></tr>
+                     )}
+                     {activeTab === 'permits' && filteredStudents.length === 0 && (
+                        <tr><td colSpan={3} className="py-20 text-center text-slate-400 font-black uppercase tracking-widest text-[10px]">No student records found for permit generation</td></tr>
                      )}
                      {activeTab === 'assignments' && teacherSubjects.length === 0 && (
                         <tr><td colSpan={3} className="py-20 text-center text-slate-400 font-black uppercase tracking-widest text-[10px]">No teaching assignments recorded</td></tr>
@@ -1031,10 +1173,47 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab, onTabChange 
         </div>
       )}
 
+      {/* Exam Permit Preview Modal */}
+      {viewingPermitStudent && settingsData && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[60] flex items-center justify-center p-4 md:p-10 no-print">
+           <div className="bg-white dark:bg-slate-800 rounded-[3.5rem] w-full max-w-3xl h-fit max-h-[90vh] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col border border-slate-100 dark:border-slate-700">
+              {/* Header Strip */}
+              <div className="px-10 py-8 border-b dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+                <div className="flex items-center gap-6">
+                  <div className="w-12 h-12 bg-[#1e1b4b] rounded-xl flex items-center justify-center shadow-lg">
+                     <Ticket className="text-white" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black uppercase tracking-tight text-slate-800 dark:text-white leading-none mb-1">Permit Preview</h2>
+                    <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.3em]">Institutional Registry • Verified Identity</p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <button onClick={() => { setViewingPermitStudent(null); handlePrintPermit(viewingPermitStudent); }} className="flex items-center gap-3 px-6 py-3 bg-slate-900 text-white dark:bg-white dark:text-slate-900 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-xl">
+                    <Printer size={18} /> Print Permit
+                  </button>
+                  <button onClick={() => setViewingPermitStudent(null)} className="p-3 hover:bg-white dark:hover:bg-slate-700 text-slate-400 hover:text-rose-500 rounded-2xl transition-all"><X size={24}/></button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-12 bg-white flex items-center justify-center">
+                <ModernExamPermit student={viewingPermitStudent} />
+              </div>
+           </div>
+        </div>
+      )}
+
       {/* Report Spooling View (Print Only) */}
       {selectedReportStudent && settingsData && (
          <div className="print-only fixed inset-0 bg-white z-[999] p-0 overflow-y-auto">
             <ModernReportCard student={selectedReportStudent} />
+         </div>
+      )}
+
+      {/* Exam Permit Spooling View (Print Only) */}
+      {selectedPermitStudent && settingsData && (
+         <div className="print-only fixed inset-0 bg-white z-[999] p-10 flex items-center justify-center">
+            <ModernExamPermit student={selectedPermitStudent} />
          </div>
       )}
 
