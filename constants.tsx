@@ -1,17 +1,14 @@
-
 import { ClassLevel } from './types';
 
 export const JSS_SUBJECTS = [
-  "Mathematics", "English", "Basic Science", "Basic Technology", 
-  "Social Studies", "Civic Education", "CRS / IRS", "Business Studies", 
-  "Agricultural Science", "Home Economics", "PHE", "Computer Studies", "Creative Arts"
+  "English Language", "Mathematics", "Basic Science", "Social Studies", 
+  "Business Studies", "Computer Studies", "Civic Education", "Religious Studies", 
+  "Cultural and Creative Arts"
 ];
 
 export const SS_SUBJECTS = [
-  "Mathematics", "English", "Biology", "Physics", "Chemistry", 
-  "Economics", "Geography", "Government", "Literature", "CRS / IRS", 
-  "Agricultural Science", "Further Mathematics", "Commerce", "Civic Education", 
-  "Computer Studies", "Technical Drawing / Fine Art", "Physical & Health Education"
+  "English Language", "Mathematics", "Biology", "Chemistry", "Physics", 
+  "Economics", "Government", "Literature in English", "Computer Studies"
 ];
 
 export const CLASSES_LIST = [
@@ -21,7 +18,7 @@ export const CLASSES_LIST = [
 
 export const DEFAULT_SETTINGS = {
   name: "Prince and Princess International School",
-  motto: "Knowledge and Excellence",
+  motto: "Character, Skill and Career",
   logo: "https://api.dicebear.com/7.x/initials/svg?seed=PP&backgroundColor=002366",
   primaryColor: "#002366",
   currentTerm: 1 as const,
